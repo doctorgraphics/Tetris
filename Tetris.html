@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Turn-Based Tetris</title>
+  <style>
+    #board {
+      font-family: monospace;
+      line-height: 1;
+    }
+
+    .cell {
+      width: 20px;
+      height: 20px;
+      display: inline-block;
+      border: 1px solid #ccc;
+    }
+
+    .filled {
+      background: #3498db;
+    }
+
+    .active {
+      outline: 2px solid #e67e22;
+      z-index: 2;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Turn-Based Tetris</h1>
+  <div>
+    <span id="score">Score: 0</span>
+    <button onclick="newGame()">New Game</button>
+    <button id="autoBtn" onclick="toggleAutoPlay()">Auto Play</button>
+    <span style="margin-left:18px;font-size:14px;">
+      <b>Speed:</b>
+      <label><input type="radio" name="speedMode" value="slow" checked> Slow</label>
+      <label><input type="radio" name="speedMode" value="normal"> Normal</label>
+      <label><input type="radio" name="speedMode" value="fast"> Fast</label>
+      <label><input type="radio" name="speedMode" value="impossible">Impossible</label>
+    </span>
+  </div>
+  <div style="display:flex;align-items:flex-start;gap:48px;margin-top:18px;">
+    <div style="display:flex;flex-direction:column;align-items:flex-start;">
+      <div style="display:flex;flex-direction:row;align-items:flex-start;">
+        <div id="board"></div>
+        <div style="margin-left:32px;">
+          <div style="font-weight:bold;margin-bottom:8px;">Next Piece:</div>
+          <div id="nextPiece"
+            style="display:flex;align-items:center;justify-content:center;padding:8px;border:2px solid #888;border-radius:8px;background:#f8f8f8;width:100px;height:100px;box-sizing:border-box;">
+          </div>
+          <div id="aiInsight"
+            style="margin-top:12px;font-size:13px;color:#444;background:#eef;padding:8px 10px;border-radius:6px;min-height:38px;max-width:180px;">
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:24px;">
+        <button id="leftBtn" onmousedown="startMoveHold(-1)" onmouseup="stopMoveHold()"
+          onmouseleave="stopMoveHold()">Left</button>
+        <button id="rotateBtn" onmousedown="startRotateHold()" onmouseup="stopRotateHold()"
+          onmouseleave="stopRotateHold()">Rotate</button>
+        <button id="rightBtn" onmousedown="startMoveHold(1)" onmouseup="stopMoveHold()"
+          onmouseleave="stopMoveHold()">Right</button>
+        <button id="dropBtn" onmousedown="startDropHold()" onmouseup="stopDropHold()"
+          onmouseleave="stopDropHold()">Drop</button>
+      </div>
+    </div>
+    <div style="min-width:180px;">
+      <div style="font-weight:bold;">High Scores</div>
+      <ol id="highScores" style="margin:0;padding-left:20px;"></ol>
+    </div>
+  </div>
+  <canvas id="fireworks"
+    style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:2000;"></canvas>
+  <div id="playerNamePrompt"
+    style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:1000;">
+    <div
+      style="background:#fff;padding:24px 32px;border-radius:10px;box-shadow:0 2px 12px #0003;display:flex;flex-direction:column;align-items:center;">
+      <div style="font-weight:bold;margin-bottom:12px;">New High Score!</div>
+      <label for="playerNameInput">Enter your name:</label>
+      <input id="playerNameInput" maxlength="16" style="margin:8px 0 16px 0;padding:4px 8px;" />
+      <button onclick="submitPlayerName()">OK</button>
+    </div>
+  </div>
+  <script>
+    let next = null;
+    let highScores = [];
+    let pendingScore = null;
+    // --- Counters for AI insight ---
+    let shapesSeen = 0;
+    let linesCompleted = 0;
+    const SHAPES = [
+      { shape: [[1, 1, 1, 1]], color: '#00c3ff' }, // I
+      { shape: [[1, 1], [1, 1]], color: '#ffe600' }, // O
+      { shape: [[0, 1, 0], [1, 1, 1]], color: '#a259f7' }, // T
+      { shape: [[1, 0, 0], [1, 1, 1]], color: '#0051ba' }, // J
+      { shape: [[0, 0, 1], [1, 1, 1]], color: '#ff7f00' }, // L
+      { shape: [[1, 1, 0], [0, 1, 1]], color: '#00d100' }, // S
+      { shape: [[0, 1, 1], [1, 1, 0]], color: '#ff1e56' }  // Z
+    ];
+    const ROWS = 20, COLS = 10;
+    let board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+    let current = { shape: null, color: null, row: 0, col: 3 };
+    let score = 0;
+    function drawNextPiece() {
+      const nextPieceDiv = document.getElementById("nextPiece");
+      if (!next) { nextPieceDiv.innerHTML = ""; return; }
+      let shape = next.shape;
+      let rows = shape.length;
+      let cols = shape[0].length;
+      let html = `<div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;width:100%;">`;
+      for (let r = 0; r < rows; r++) {
+        html += '<div style="display:flex;flex-direction:row;justify-content:center;">';
+        for (let c = 0; c < cols; c++) {
+          let style = shape[r][c] ?
+            `background:${next.color};width:20px;height:20px;display:inline-block;border:1px solid #ccc;`
+            : 'width:20px;height:20px;display:inline-block;';
+          html += `<span style="${style}"></span>`;
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+      nextPieceDiv.innerHTML = html;
+    }
+
+    let autoPlay = false;
+    let autoInterval = null;
+
+    let speedModes = {
+      slow: 400,
+      normal: 120,
+      fast: 50,
+      impossible: .1
+    };
+    let scoreMultipliers = {
+      slow: 0.75,
+      normal: 1,
+      fast: 1.5,
+      impossible: 2
+    };
+    let currentSpeed = 'slow';
+
+    function getSelectedSpeedMs() {
+      return speedModes[currentSpeed] || 120;
+    }
+
+    function setSpeedMode(mode) {
+      currentSpeed = mode;
+      if (autoPlay) {
+        clearInterval(autoInterval);
+        autoInterval = setInterval(autoPlayStep, getSelectedSpeedMs());
+      }
+    }
+
+    function toggleAutoPlay() {
+      autoPlay = !autoPlay;
+      document.getElementById('autoBtn').textContent = autoPlay ? 'Stop Auto Play' : 'Auto Play';
+      if (autoPlay) {
+        autoInterval = setInterval(autoPlayStep, getSelectedSpeedMs());
+      } else {
+        clearInterval(autoInterval);
+        autoInterval = null;
+      }
+    }
+
+    function autoPlayStep() {
+      if (current.row === 0) {
+        const best = findBestMove();
+        current.targetCol = best.col;
+        current.targetRot = best.rot;
+        current.rotationsLeft = best.rot;
+      }
+      updateAIInsight();
+      if (current.rotationsLeft && current.rotationsLeft > 0) {
+        rotate();
+        current.rotationsLeft--;
+        return;
+      }
+      if (current.col < current.targetCol) {
+        move(1);
+        return;
+      } else if (current.col > current.targetCol) {
+        move(-1);
+        return;
+      }
+      drop();
+    }
+
+    // --- AI Helper Functions ---
+    function getBumpiness(bd) {
+      let heights = [];
+      for (let c = 0; c < COLS; c++) {
+        let h = 0;
+        for (let r = 0; r < ROWS; r++) {
+          if (bd[r][c]) {
+            h = ROWS - r;
+            break;
+          }
+        }
+        heights.push(h);
+      }
+      let bump = 0;
+      for (let i = 0; i < heights.length - 1; i++) {
+        bump += Math.abs(heights[i] - heights[i + 1]);
+      }
+      return bump;
+    }
+    function getWellDepth(bd) {
+      let total = 0;
+      for (let c = 0; c < COLS; c++) {
+        for (let r = 0; r < ROWS; r++) {
+          if (!bd[r][c] &&
+            (c === 0 || bd[r][c - 1]) &&
+            (c === COLS - 1 || bd[r][c + 1])) {
+            let depth = 1;
+            let rr = r + 1;
+            while (rr < ROWS && !bd[rr][c]) {
+              depth++;
+              rr++;
+            }
+            total += depth;
+          }
+        }
+      }
+      return total;
+    }
+    function getBlockades(bd) {
+      let blockades = 0;
+      for (let c = 0; c < COLS; c++) {
+        let foundHole = false;
+        for (let r = 0; r < ROWS; r++) {
+          if (!bd[r][c]) foundHole = true;
+          else if (foundHole) blockades++;
+        }
+      }
+      return blockades;
+    }
+    function isTetrisSetup(bd) {
+      for (let c of [0, COLS - 1]) {
+        let well = 0;
+        for (let r = ROWS - 1; r >= 0; r--) {
+          if (!bd[r][c]) well++;
+          else break;
+        }
+        if (well >= 4) return true;
+      }
+      return false;
+    }
+    let aiLastInsight = "";
+    // Improved AI: deeper lookahead, more features
+    function findBestMove() {
+      let bestScore = -Infinity;
+      let bestCol = 0;
+      let bestRot = 0;
+      const originalShape = current.shape;
+      const originalColor = current.color;
+      // 2-ply lookahead with next piece
+      function evaluateBoard(bd, linesCleared) {
+        let aggHeight = getAggregateHeight(bd);
+        let holes = getHoles(bd);
+        let bump = getBumpiness(bd);
+        let well = getWellDepth(bd);
+        let blockades = getBlockades(bd);
+        let maxHeight = 0;
+        for (let c = 0; c < COLS; c++) {
+          for (let r = 0; r < ROWS; r++) {
+            if (bd[r][c]) {
+              let h = ROWS - r;
+              if (h > maxHeight) maxHeight = h;
+              break;
+            }
+          }
+        }
+        // Add more features: reward Tetrises, penalize high stacks, reward clearing lines
+        return (
+          -0.51066 * aggHeight
+          + 0.760666 * linesCleared * linesCleared
+          - 0.35663 * holes
+          - 0.184483 * bump
+          - 0.35 * well
+          - 0.18 * blockades
+          - 0.2 * maxHeight
+          + (linesCleared === 4 ? 2.5 : 0) // Tetris bonus
+          - (maxHeight > 16 ? (maxHeight - 16) * 2 : 0) // heavy penalty for high stack
+        );
+      }
+      for (let rot = 0; rot < 4; rot++) {
+        let testShape = originalShape;
+        for (let r = 0; r < rot; r++) {
+          testShape = testShape[0].map((_, i) => testShape.map(row => row[i]).reverse());
+        }
+        for (let col = -2; col < COLS; col++) {
+          if (!canPlaceAt(testShape, col)) continue;
+          let testRow = 0;
+          while (canPlaceAt(testShape, col, testRow + 1)) testRow++;
+          let testBoard = board.map(row => row.slice());
+          for (let tr = 0; tr < testShape.length; tr++)
+            for (let tc = 0; tc < testShape[0].length; tc++)
+              if (testShape[tr][tc])
+                testBoard[testRow + tr][col + tc] = originalColor;
+          let linesCleared = 0;
+          for (let r = 0; r < ROWS; r++) {
+            if (testBoard[r].every(x => x)) linesCleared++;
+          }
+          // 2-ply lookahead: try all placements for the next piece
+          let bestNext = -Infinity;
+          let nextShape = next.shape;
+          let nextColor = next.color;
+          for (let nrot = 0; nrot < 4; nrot++) {
+            let nShape = nextShape;
+            for (let nr = 0; nr < nrot; nr++) {
+              nShape = nShape[0].map((_, i) => nShape.map(row => row[i]).reverse());
+            }
+            for (let ncol = -2; ncol < COLS; ncol++) {
+              if (!canPlaceAt(nShape, ncol, 0, testBoard)) continue;
+              let nrow = 0;
+              while (canPlaceAt(nShape, ncol, nrow + 1, testBoard)) nrow++;
+              let nBoard = testBoard.map(row => row.slice());
+              for (let tr = 0; tr < nShape.length; tr++)
+                for (let tc = 0; tc < nShape[0].length; tc++)
+                  if (nShape[tr][tc])
+                    nBoard[nrow + tr][ncol + tc] = nextColor;
+              let nLinesCleared = 0;
+              for (let r = 0; r < ROWS; r++) {
+                if (nBoard[r].every(x => x)) nLinesCleared++;
+              }
+              let score = evaluateBoard(nBoard, nLinesCleared);
+              if (score > bestNext) bestNext = score;
+            }
+          }
+          let score = evaluateBoard(testBoard, linesCleared) + 0.5 * bestNext;
+          if (score > bestScore) {
+            bestScore = score;
+            bestCol = col;
+            bestRot = rot;
+          }
+        }
+      }
+      return { col: bestCol, rot: bestRot };
+    }
+    function canPlaceAt(shape, col, row = 0, customBoard = null) {
+      let bd = customBoard || board;
+      for (let r = 0; r < shape.length; r++)
+        for (let c = 0; c < shape[0].length; c++)
+          if (shape[r][c]) {
+            let nr = row + r, nc = col + c;
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || bd[nr][nc]) return false;
+          }
+      return true;
+    }
+    function getAggregateHeight(bd) {
+      let total = 0;
+      for (let c = 0; c < COLS; c++) {
+        for (let r = 0; r < ROWS; r++) {
+          if (bd[r][c]) {
+            total += (ROWS - r);
+            break;
+          }
+        }
+      }
+      return total;
+    }
+    function getHoles(bd) {
+      let holes = 0;
+      for (let c = 0; c < COLS; c++) {
+        let block = false;
+        for (let r = 0; r < ROWS; r++) {
+          if (bd[r][c]) block = true;
+          else if (block && !bd[r][c]) holes++;
+        }
+      }
+      return holes;
+    }
+    function newPiece() {
+      if (!next) {
+        next = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+      }
+      current = { shape: next.shape, color: next.color, row: 0, col: 3 };
+      next = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+      drawNextPiece();
+      shapesSeen++;
+      updateAIInsight();
+      if (!canMove(0, 0, current.shape)) {
+        addHighScore(score);
+        if (autoPlay) {
+          setTimeout(() => { newGame(); }, 500);
+        } else {
+          alert("Game Over! Your score: " + score);
+        }
+        board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        score = 0;
+        updateScore();
+      }
+    }
+    function canMove(dr, dc, shape = current.shape) {
+      for (let r = 0; r < shape.length; r++)
+        for (let c = 0; c < shape[0].length; c++)
+          if (shape[r][c]) {
+            let nr = current.row + r + dr, nc = current.col + c + dc;
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || board[nr][nc]) return false;
+          }
+      return true;
+    }
+    function merge() {
+      for (let r = 0; r < current.shape.length; r++)
+        for (let c = 0; c < current.shape[0].length; c++)
+          if (current.shape[r][c])
+            board[current.row + r][current.col + c] = current.color;
+      let linesCleared = 0;
+      for (let r = ROWS - 1; r >= 0; r--) {
+        if (board[r].every(x => x)) {
+          board.splice(r, 1);
+          board.unshift(Array(COLS).fill(0));
+          linesCleared++;
+          r++;
+        }
+      }
+      if (linesCleared > 0) {
+        let bonus = 0;
+        if (linesCleared === 4) {
+          bonus = 800;
+          showFireworks();
+        }
+        let multiplier = scoreMultipliers[currentSpeed] || 1;
+        score += Math.round((linesCleared * 100 + bonus) * multiplier);
+        linesCompleted += linesCleared;
+        updateScore();
+        updateAIInsight();
+      }
+    }
+    function updateAIInsight() {
+      const aiDiv = document.getElementById('aiInsight');
+      if (!aiDiv) return;
+      let insight = aiLastInsight || 'AI is ready. Waiting for first move...';
+      aiDiv.innerHTML = `<div>${insight}</div><div style="margin-top:6px;font-size:12px;color:#666;">Shapes seen: <b>${shapesSeen}</b> &nbsp;|&nbsp; Lines completed: <b>${linesCompleted}</b></div>`;
+    }
+    function newGame() {
+      board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      score = 0;
+      shapesSeen = 0;
+      linesCompleted = 0;
+      updateScore();
+      next = null;
+      newPiece();
+      draw();
+      updateAIInsight();
+    }
+    function updateScore() {
+      document.getElementById("score").textContent = "Score: " + score;
+    }
+    function move(dir) {
+      if (canMove(0, dir)) current.col += dir;
+      draw();
+    }
+    function rotate() {
+      const shape = current.shape[0].map((_, i) => current.shape.map(row => row[i]).reverse());
+      if (canMove(0, 0, shape)) current.shape = shape;
+      draw();
+    }
+    function drop() {
+      if (canMove(1, 0)) {
+        current.row++;
+        draw();
+      } else {
+        merge();
+        newPiece();
+        draw();
+      }
+    }
+    let dropInterval = null;
+    function startDropHold() {
+      if (dropInterval) return;
+      drop();
+      dropInterval = setInterval(drop, 40);
+    }
+    function stopDropHold() {
+      clearInterval(dropInterval);
+      dropInterval = null;
+    }
+    let moveInterval = null;
+    function startMoveHold(dir) {
+      if (moveInterval) return;
+      move(dir);
+      moveInterval = setInterval(() => move(dir), 120);
+    }
+    function stopMoveHold() {
+      clearInterval(moveInterval);
+      moveInterval = null;
+    }
+    let rotateInterval = null;
+    function startRotateHold() {
+      if (rotateInterval) return;
+      rotate();
+      rotateInterval = setInterval(rotate, 250);
+    }
+    function stopRotateHold() {
+      clearInterval(rotateInterval);
+      rotateInterval = null;
+    }
+    function draw() {
+      let html = "";
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          let color = board[r][c];
+          let active = false;
+          let activeColor = null;
+          for (let rr = 0; rr < current.shape.length; rr++)
+            for (let cc = 0; cc < current.shape[0].length; cc++)
+              if (current.shape[rr][cc] && r == current.row + rr && c == current.col + cc) {
+                active = true;
+                activeColor = current.color;
+              }
+          let style = '';
+          if (active) {
+            style = `background:${activeColor};outline:2px solid #e67e22;z-index:2;`;
+          } else if (color) {
+            style = `background:${color};`;
+          }
+          html += `<span class="cell${active ? ' active' : color ? ' filled' : ''}" style="${style}" data-row="${r}" data-col="${c}"></span>`;
+        }
+        html += "<br>";
+      }
+      document.getElementById("board").innerHTML = html;
+    }
+    function showFireworks() {
+      const canvas = document.getElementById('fireworks');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      canvas.style.display = 'block';
+      let ctx = canvas.getContext('2d');
+      let particles = [];
+      let colors = ['#ff5252', '#ffd700', '#00e6ff', '#a259f7', '#00d100', '#ff7f00'];
+      function createFirework() {
+        let x = Math.random() * canvas.width * 0.6 + canvas.width * 0.2;
+        let y = Math.random() * canvas.height * 0.3 + canvas.height * 0.2;
+        let color = colors[Math.floor(Math.random() * colors.length)];
+        for (let i = 0; i < 32; i++) {
+          let angle = (Math.PI * 2 * i) / 32;
+          let speed = Math.random() * 4 + 2;
+          particles.push({
+            x, y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            alpha: 1,
+            color
+          });
+        }
+      }
+      for (let i = 0; i < 3; i++) createFirework();
+      let frame = 0;
+      function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (let p of particles) {
+          ctx.globalAlpha = p.alpha;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 3, 0, 2 * Math.PI);
+          ctx.fillStyle = p.color;
+          ctx.fill();
+        }
+        for (let p of particles) {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vx *= 0.96;
+          p.vy *= 0.96;
+          p.vy += 0.05;
+          p.alpha *= 0.96;
+        }
+        frame++;
+        if (frame < 60) {
+          requestAnimationFrame(animate);
+        } else {
+          canvas.style.display = 'none';
+        }
+      }
+      animate();
+    }
+    // High score and player name logic
+    function addHighScore(newScore) {
+      if (newScore <= 0) return;
+      if (autoPlay) {
+        saveHighScore({ name: 'AI', score: newScore });
+      } else {
+        pendingScore = newScore;
+        showPlayerNamePrompt();
+      }
+    }
+    function showPlayerNamePrompt() {
+      document.getElementById('playerNamePrompt').style.display = 'flex';
+      document.getElementById('playerNameInput').value = '';
+      setTimeout(() => { document.getElementById('playerNameInput').focus(); }, 100);
+    }
+    function submitPlayerName() {
+      const name = document.getElementById('playerNameInput').value.trim() || 'Player';
+      document.getElementById('playerNamePrompt').style.display = 'none';
+      if (pendingScore !== null) {
+        saveHighScore({ name, score: pendingScore });
+        pendingScore = null;
+      }
+    }
+    function saveHighScore(entry) {
+      highScores.push(entry);
+      highScores.sort((a, b) => b.score - a.score);
+      if (highScores.length > 10) highScores.length = 10;
+      updateHighScores();
+      localStorage.setItem('tetrisHighScores', JSON.stringify(highScores));
+    }
+    function updateHighScores() {
+      const ol = document.getElementById("highScores");
+      ol.innerHTML = highScores.map(s => `<li><b>${escapeHtml(s.name)}</b>: ${s.score}</li>`).join("");
+    }
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"]'/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+    function loadHighScores() {
+      try {
+        const data = localStorage.getItem('tetrisHighScores');
+        if (data) {
+          highScores = JSON.parse(data);
+        }
+      } catch (e) { highScores = []; }
+      updateHighScores();
+    }
+    // Mouse drag and click for moving/rotating pieces
+    let dragStartX = null;
+    let dragStartY = null;
+    let dragging = false;
+    let lastDragCol = null;
+    let pieceDroppedByDrag = false;
+    const boardDiv = document.getElementById("board");
+    boardDiv.addEventListener("mousedown", function (e) {
+      if (e.button !== 0) return;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      lastDragCol = current.col;
+      dragging = true;
+      pieceDroppedByDrag = false;
+    });
+    boardDiv.addEventListener("mousemove", function (e) {
+      if (!dragging) return;
+      let dx = e.clientX - dragStartX;
+      let dy = e.clientY - dragStartY;
+      let cellWidth = 20;
+      let moveBy = Math.round(dx / cellWidth);
+      let newCol = lastDragCol + moveBy;
+      if (newCol !== current.col && canMove(0, newCol - current.col)) {
+        current.col = newCol;
+        draw();
+      }
+      if (!pieceDroppedByDrag && dy > 30) {
+        while (canMove(1, 0)) {
+          current.row++;
+        }
+        merge();
+        newPiece();
+        draw();
+        pieceDroppedByDrag = true;
+        dragging = false;
+      }
+    });
+    boardDiv.addEventListener("mouseup", function (e) {
+      if (!dragging) return;
+      dragging = false;
+    });
+    boardDiv.addEventListener("wheel", function (e) {
+      e.preventDefault();
+      rotate();
+    });
+    boardDiv.addEventListener("mouseleave", function (e) {
+      dragging = false;
+    });
+    boardDiv.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+    });
+    document.addEventListener('DOMContentLoaded', function () {
+      updateAIInsight();
+      // Set up speed mode radio buttons
+      document.querySelectorAll('input[name="speedMode"]').forEach(radio => {
+        radio.addEventListener('change', function () {
+          if (this.checked) setSpeedMode(this.value);
+        });
+      });
+    });
+    newPiece();
+    draw();
+    loadHighScores();
+  </script>
+</body>
+
+</html>
