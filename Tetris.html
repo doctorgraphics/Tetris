@@ -46,13 +46,13 @@
 
 <body>
   <h1>
-___________     __         .__        
-\__    ___/____/  |________|__| ______
-  |    |_/ __ \   __\_  __ \  |/  ___/
-  |    |\  ___/|  |  |  | \/  |\___ \ 
-  |____| \___  >__|  |__|  |__/____  >
-             \/                    \/ 
-</h1>
+    ___________ __ .__
+    \__ ___/____/ |________|__| ______
+    | |_/ __ \ __\_ __ \ |/ ___/
+    | |\ ___/| | | | \/ |\___ \
+    |____| \___ >__| |__| |__/____ >
+    \/ \/
+  </h1>
   <div>
     <span id="score">Score: 0</span>
     <button onclick="newGame()">New Game</button>
@@ -75,7 +75,7 @@ ___________     __         .__
             style="display:flex;align-items:center;justify-content:center;padding:8px;border:2px solid #888;border-radius:8px;background:#f8f8f8;width:100px;height:100px;box-sizing:border-box;">
           </div>
           <div id="aiInsight"
-            style="margin-top:12px;font-size:13px;color:#444;background:#eef;padding:8px 10px;border-radius:6px;min-height:38px;max-width:180px;">
+            style="margin-top:12px;font-size:13px;color:#444;background:#eef;padding:8px 10px;border-radius:6px;min-height:38px;max-width:240px;">
           </div>
         </div>
       </div>
@@ -163,7 +163,7 @@ ___________     __         .__
       fast: 1.5,
       impossible: 2
     };
-    let currentSpeed = 'normal';
+    let currentSpeed = 'normal'; // Default speed mode
 
     function getSelectedSpeedMs() {
       return speedModes[currentSpeed] || 120;
@@ -281,7 +281,6 @@ ___________     __         .__
       }
       return false;
     }
-    let aiLastInsight = "";
     // Improved AI: deeper lookahead, more features
     function findBestMove() {
       let bestScore = -Infinity;
@@ -458,8 +457,6 @@ ___________     __         .__
           bonus = 800;
           showFireworks();
         }
-        // Increase multiplier for current speed
-        scoreMultipliers[currentSpeed] = (scoreMultipliers[currentSpeed] || 1) + 0.001 * linesCleared;
         let multiplier = scoreMultipliers[currentSpeed] || 1;
         score += Math.round((linesCleared * 100 + bonus) * multiplier);
         linesCompleted += linesCleared;
@@ -471,8 +468,7 @@ ___________     __         .__
       const aiDiv = document.getElementById('aiInsight');
       if (!aiDiv) return;
       let insight = aiLastInsight || 'AI is ready. Waiting for first move...';
-      let multiplier = (scoreMultipliers[currentSpeed] || 1).toFixed(3);
-      aiDiv.innerHTML = `<div>${insight}</div><div style="margin-top:6px;font-size:12px;color:#666;">Shapes seen: <b>${shapesSeen}</b> &nbsp;|&nbsp; Lines completed: <b>${linesCompleted}</b> &nbsp;|&nbsp; <span>Multiplier: <b>${multiplier}x</b></span></div>`;
+      aiDiv.innerHTML = `<div>${insight}</div><div style="margin-top:6px;font-size:12px;color:#666;">Shapes seen: <b>${shapesSeen}</b> &nbsp;|&nbsp; Lines completed: <b>${linesCompleted}</b></div>`;
     }
     function newGame() {
       gameActive = true;
