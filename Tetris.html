@@ -7,6 +7,10 @@
     #board {
       font-family: monospace;
       line-height: 1;
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
     }
 
     .cell {
@@ -14,6 +18,10 @@
       height: 20px;
       display: inline-block;
       border: 1px solid #ccc;
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
     }
 
     .filled {
@@ -23,6 +31,15 @@
     .active {
       outline: 2px solid #e67e22;
       z-index: 2;
+    }
+
+    /* Add this style to the board div for a matching border */
+    #board {
+      border: 2px solid #888;
+      border-radius: 8px;
+      background: #f8f8f8;
+      padding: 8px;
+      box-sizing: border-box;
     }
   </style>
 </head>
@@ -35,8 +52,8 @@
     <button id="autoBtn" onclick="toggleAutoPlay()">Auto Play</button>
     <span style="margin-left:18px;font-size:14px;">
       <b>Speed:</b>
-      <label><input type="radio" name="speedMode" value="slow" checked> Slow</label>
-      <label><input type="radio" name="speedMode" value="normal"> Normal</label>
+      <label><input type="radio" name="speedMode" value="slow"> Slow</label>
+      <label><input type="radio" name="speedMode" value="normal" checked> Normal</label>
       <label><input type="radio" name="speedMode" value="fast"> Fast</label>
       <label><input type="radio" name="speedMode" value="impossible">Impossible</label>
     </span>
@@ -139,7 +156,7 @@
       fast: 1.5,
       impossible: 2
     };
-    let currentSpeed = 'slow';
+    let currentSpeed = 'normal';
 
     function getSelectedSpeedMs() {
       return speedModes[currentSpeed] || 120;
@@ -154,10 +171,20 @@
     }
 
     function toggleAutoPlay() {
-      autoPlay = !autoPlay;
-      document.getElementById('autoBtn').textContent = autoPlay ? 'Stop Auto Play' : 'Auto Play';
-      if (autoPlay) {
+      // If not in a game, start a new game in auto mode
+      if (!gameActive && !autoPlay) {
+        autoPlay = true;
+        document.getElementById('autoBtn').textContent = 'Stop Auto Play';
+        stopScrollingTitle();
+        newGame();
         autoInterval = setInterval(autoPlayStep, getSelectedSpeedMs());
+        return;
+      }
+      autoPlay = !autoPlay;
+      document.getElementById('autoBtn').textContent = autoPlay ? 'Stop Auto Play' : 'Start Auto Play';
+      if (autoPlay) {
+        autoInterval = setInterval(autoPlayStep, getSelectedSpeedMs())
+        stopScrollingTitle();
       } else {
         clearInterval(autoInterval);
         autoInterval = null;
@@ -383,6 +410,8 @@
       updateAIInsight();
       if (!canMove(0, 0, current.shape)) {
         addHighScore(score);
+        // Show scrolling title after game over
+        setTimeout(() => { startScrollingTitle(); }, 500);
         if (autoPlay) {
           setTimeout(() => { newGame(); }, 500);
         } else {
@@ -422,6 +451,8 @@
           bonus = 800;
           showFireworks();
         }
+        // Increase multiplier for current speed
+        scoreMultipliers[currentSpeed] = (scoreMultipliers[currentSpeed] || 1) + 0.001 * linesCleared;
         let multiplier = scoreMultipliers[currentSpeed] || 1;
         score += Math.round((linesCleared * 100 + bonus) * multiplier);
         linesCompleted += linesCleared;
@@ -433,9 +464,11 @@
       const aiDiv = document.getElementById('aiInsight');
       if (!aiDiv) return;
       let insight = aiLastInsight || 'AI is ready. Waiting for first move...';
-      aiDiv.innerHTML = `<div>${insight}</div><div style="margin-top:6px;font-size:12px;color:#666;">Shapes seen: <b>${shapesSeen}</b> &nbsp;|&nbsp; Lines completed: <b>${linesCompleted}</b></div>`;
+      let multiplier = (scoreMultipliers[currentSpeed] || 1).toFixed(3);
+      aiDiv.innerHTML = `<div>${insight}</div><div style="margin-top:6px;font-size:12px;color:#666;">Shapes seen: <b>${shapesSeen}</b> &nbsp;|&nbsp; Lines completed: <b>${linesCompleted}</b> &nbsp;|&nbsp; <span>Multiplier: <b>${multiplier}x</b></span></div>`;
     }
     function newGame() {
+      gameActive = true;
       board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
       score = 0;
       shapesSeen = 0;
@@ -498,31 +531,84 @@
       clearInterval(rotateInterval);
       rotateInterval = null;
     }
+    // --- Scrolling Title Logic ---
+    let showScrollingTitle = true;
+    let scrollingTitleOffset = 0;
+    let scrollingTitleInterval = null;
+
+    function getScrollingTitleText() {
+      // Title
+      let text = "Tetris          "; // 10 spaces after title
+      // High scores
+      if (highScores && highScores.length > 0) {
+        text += "| High Scores: ";
+        text += highScores.map(s => `${s.name} ... ${s.score}`).join("  ");
+        text += "          "; // 10 spaces after high scores
+      }
+      return text;
+    }
+
+    function startScrollingTitle() {
+      showScrollingTitle = true;
+      gameActive = false;
+      scrollingTitleOffset = 0;
+      if (scrollingTitleInterval) clearInterval(scrollingTitleInterval);
+      scrollingTitleInterval = setInterval(() => {
+        scrollingTitleOffset = (scrollingTitleOffset + 1) % getScrollingTitleText().length;
+        draw();
+      }, 300); // slower scroll
+    }
+    function stopScrollingTitle() {
+      showScrollingTitle = false;
+      if (scrollingTitleInterval) clearInterval(scrollingTitleInterval);
+      scrollingTitleInterval = null;
+      draw();
+    }
+
     function draw() {
       let html = "";
+      const titleRow = 3;
+      let title = getScrollingTitleText();
+      let offset = scrollingTitleOffset;
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
-          let color = board[r][c];
+          let color = gameActive ? board[r][c] : 0;
           let active = false;
           let activeColor = null;
-          for (let rr = 0; rr < current.shape.length; rr++)
-            for (let cc = 0; cc < current.shape[0].length; cc++)
-              if (current.shape[rr][cc] && r == current.row + rr && c == current.col + cc) {
-                active = true;
-                activeColor = current.color;
-              }
-          let style = '';
-          if (active) {
-            style = `background:${activeColor};outline:2px solid #e67e22;z-index:2;`;
-          } else if (color) {
-            style = `background:${color};`;
+          if (gameActive) {
+            for (let rr = 0; rr < current.shape.length; rr++)
+              for (let cc = 0; cc < current.shape[0].length; cc++)
+                if (current.shape[rr][cc] && r == current.row + rr && c == current.col + cc) {
+                  active = true;
+                  activeColor = current.color;
+                }
           }
-          html += `<span class="cell${active ? ' active' : color ? ' filled' : ''}" style="${style}" data-row="${r}" data-col="${c}"></span>`;
+          let style = '';
+          let cellContent = '';
+          // Scrolling title + high scores rendering on row 3, only if not in game
+          if (showScrollingTitle && r === titleRow) {
+            let idx = (c + offset) % title.length;
+            if (idx < 0) idx += title.length;
+            let ch = title[idx];
+            if (ch && ch !== ' ') {
+              cellContent = ch;
+              style += 'background:#ffe600;color:#222;font-weight:bold;font-size:15px;text-align:center;';
+            }
+          }
+          if (active) {
+            style += `background:${activeColor};outline:2px solid #e67e22;z-index:2;`;
+            cellContent = '';
+          } else if (color) {
+            style += `background:${color};`;
+            cellContent = '';
+          }
+          html += `<span class="cell${active ? ' active' : color ? ' filled' : ''}" style="${style}" data-row="${r}" data-col="${c}">${cellContent ? cellContent : '&nbsp;'}</span>`;
         }
         html += "<br>";
       }
       document.getElementById("board").innerHTML = html;
     }
+
     function showFireworks() {
       const canvas = document.getElementById('fireworks');
       canvas.width = window.innerWidth;
@@ -607,7 +693,17 @@
     }
     function updateHighScores() {
       const ol = document.getElementById("highScores");
-      ol.innerHTML = highScores.map(s => `<li><b>${escapeHtml(s.name)}</b>: ${s.score}</li>`).join("");
+      // Find max name and score length for alignment
+      let maxName = 0, maxScore = 0;
+      highScores.forEach(s => {
+        if (s.name.length > maxName) maxName = s.name.length;
+        if (String(s.score).length > maxScore) maxScore = String(s.score).length;
+      });
+      ol.innerHTML = highScores.map(s => {
+        let name = s.name.padEnd(maxName, ' ');
+        let score = String(s.score).padStart(maxScore, ' ');
+        return `<li style="font-family:monospace;display:flex;justify-content:space-between;align-items:center;width:100%;"><span style='flex:1;text-align:left;'>${name}</span><span style='flex:0 0 auto;text-align:right;'>${score}</span></li>`;
+      }).join("");
     }
     function escapeHtml(str) {
       return String(str).replace(/[&<>"]'/g, function (c) {
@@ -675,6 +771,7 @@
       e.preventDefault();
     });
     document.addEventListener('DOMContentLoaded', function () {
+      loadHighScores();
       updateAIInsight();
       // Set up speed mode radio buttons
       document.querySelectorAll('input[name="speedMode"]').forEach(radio => {
@@ -682,10 +779,16 @@
           if (this.checked) setSpeedMode(this.value);
         });
       });
+      startScrollingTitle();
     });
+    // In newGame(), stop the scrolling title when the game starts
+    const origNewGame = newGame;
+    newGame = function () {
+      stopScrollingTitle();
+      origNewGame.apply(this, arguments);
+    }
     newPiece();
     draw();
-    loadHighScores();
   </script>
 </body>
 
