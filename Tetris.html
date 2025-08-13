@@ -2,10 +2,38 @@
 <html>
 
 <head>
-  <title>Turn-Based Tetris</title>
+  <title>Tetris</title>
   <style>
+    body,
+    html,
+    input,
+    button,
+    textarea,
+    select,
+    #board,
+    .cell,
+    .filled,
+    .active,
+    #score,
+    #aiInsight,
+    #highScores,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    label,
+    span,
+    div {
+      font-family: monospace !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      -moz-user-select: none !important;
+      -ms-user-select: none !important;
+    }
+
     #board {
-      font-family: monospace;
       line-height: 1;
     }
 
@@ -28,7 +56,7 @@
 </head>
 
 <body>
-  <h1>Turn-Based Tetris</h1>
+  <h1>Tetris</h1>
   <div>
     <span id="score">Score: 0</span>
     <button onclick="newGame()">New Game</button>
@@ -67,12 +95,16 @@
       </div>
     </div>
     <div style="min-width:180px;">
-      <div style="font-weight:bold;">High Scores</div>
+      <div style="font-weight:bold;">
+        <h3>High Scores</h3>
+      </div>
       <ol id="highScores" style="margin:0;padding-left:20px;"></ol>
     </div>
   </div>
   <canvas id="fireworks"
     style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:2000;"></canvas>
+  <!-- High scores are stored here, base64 encoded -->
+  <textarea id="highScoresData" style="display:none;width:100%;height:40px;"></textarea>
   <div id="playerNamePrompt"
     style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:1000;">
     <div
@@ -124,8 +156,12 @@
       nextPieceDiv.innerHTML = html;
     }
 
+
     let autoPlay = false;
     let autoInterval = null;
+    let aiLastDropTime = null;
+    let aiTimeoutCheck = null;
+    let aiStuckCounter = 0;
 
     let speedModes = {
       slow: 400,
@@ -153,16 +189,40 @@
       }
     }
 
+
     function toggleAutoPlay() {
       autoPlay = !autoPlay;
       document.getElementById('autoBtn').textContent = autoPlay ? 'Stop Auto Play' : 'Auto Play';
       if (autoPlay) {
+        aiLastDropTime = Date.now();
         autoInterval = setInterval(autoPlayStep, getSelectedSpeedMs());
+        aiTimeoutCheck = setInterval(function () {
+          if (autoPlay && Date.now() - aiLastDropTime > 5000) {
+            // End game, record score, start new game
+            autoPlay = false;
+            clearInterval(autoInterval);
+            clearInterval(aiTimeoutCheck);
+            autoInterval = null;
+            aiTimeoutCheck = null;
+            addHighScore(score);
+            setTimeout(function () {
+              autoPlay = true;
+              document.getElementById('autoBtn').textContent = 'Stop Auto Play';
+              newGame();
+              aiLastDropTime = Date.now();
+              autoInterval = setInterval(autoPlayStep, getSelectedSpeedMs());
+              aiTimeoutCheck = setInterval(arguments.callee, 1000);
+            }, 1000);
+          }
+        }, 1000);
       } else {
         clearInterval(autoInterval);
+        clearInterval(aiTimeoutCheck);
         autoInterval = null;
+        aiTimeoutCheck = null;
       }
     }
+
 
     function autoPlayStep() {
       if (current.row === 0) {
@@ -170,21 +230,40 @@
         current.targetCol = best.col;
         current.targetRot = best.rot;
         current.rotationsLeft = best.rot;
+        aiStuckCounter = 0;
       }
       updateAIInsight();
+      let moved = false;
+      // Rotate toward target
       if (current.rotationsLeft && current.rotationsLeft > 0) {
         rotate();
         current.rotationsLeft--;
-        return;
-      }
-      if (current.col < current.targetCol) {
+        moved = true;
+      } else if (current.col < current.targetCol) {
         move(1);
-        return;
+        moved = true;
       } else if (current.col > current.targetCol) {
         move(-1);
+        moved = true;
+      }
+      // If stuck for 10 steps, force drop
+      if (!moved) {
+        aiStuckCounter++;
+      } else {
+        aiStuckCounter = 0;
+      }
+      if (aiStuckCounter >= 10) {
+        drop();
+        aiLastDropTime = Date.now();
+        aiStuckCounter = 0;
         return;
       }
-      drop();
+      // If in position and orientation, drop
+      if (!moved) {
+        drop();
+        aiLastDropTime = Date.now();
+        aiStuckCounter = 0;
+      }
     }
 
     // --- AI Helper Functions ---
@@ -283,7 +362,7 @@
               }
             }
           }
-          let survivalMode = maxHeight > 10;
+          let survivalMode = maxHeight > 7;
           let tetrisBonus = 0;
           let nonTetrisPenalty = 0;
           if (!survivalMode) {
@@ -515,7 +594,34 @@
     function updateAIInsight() {
       const aiDiv = document.getElementById('aiInsight');
       if (!aiDiv) return;
-      let insight = aiLastInsight || 'AI is ready. Waiting for first move...';
+      let insight = '';
+      if (autoPlay) {
+        insight = aiLastInsight || 'AI is ready. Waiting for first move...';
+      } else {
+        // Human performance rating
+        // Simple metrics: lines cleared, Tetrises, average height
+        let tetrisCount = (typeof board !== 'undefined') ? board.filter(row => row.every(x => x)).length : 0;
+        let avgHeight = 0;
+        if (typeof board !== 'undefined') {
+          let heights = [];
+          for (let c = 0; c < COLS; c++) {
+            let h = 0;
+            for (let r = 0; r < ROWS; r++) {
+              if (board[r][c]) {
+                h = ROWS - r;
+                break;
+              }
+            }
+            heights.push(h);
+          }
+          avgHeight = heights.reduce((a, b) => a + b, 0) / COLS;
+        }
+        let rating = 'Average';
+        if (linesCompleted >= 40 && avgHeight < 8 && tetrisCount > 0) rating = 'Excellent!';
+        else if (linesCompleted >= 20 && avgHeight < 12) rating = 'Good';
+        else if (linesCompleted < 5) rating = 'Beginner';
+        insight = `AI rates your play: <b>${rating}</b><br>Lines: <b>${linesCompleted}</b>, Avg Height: <b>${avgHeight.toFixed(1)}</b>, Tetrises: <b>${tetrisCount}</b>`;
+      }
       aiDiv.innerHTML = `<div>${insight}</div><div style="margin-top:6px;font-size:12px;color:#666;">Shapes seen: <b>${shapesSeen}</b> &nbsp;|&nbsp; Lines completed: <b>${linesCompleted}</b></div>`;
     }
     function newGame() {
@@ -681,12 +787,23 @@
         pendingScore = null;
       }
     }
+    function encodeScores(scores) {
+      return btoa(unescape(encodeURIComponent(JSON.stringify(scores))));
+    }
+    function decodeScores(str) {
+      try {
+        return JSON.parse(decodeURIComponent(escape(atob(str))));
+      } catch (e) { return []; }
+    }
     function saveHighScore(entry) {
       highScores.push(entry);
       highScores.sort((a, b) => b.score - a.score);
       if (highScores.length > 10) highScores.length = 10;
       updateHighScores();
+      // Save to localStorage as before
       localStorage.setItem('tetrisHighScores', JSON.stringify(highScores));
+      // Save to hidden textarea, encrypted
+      document.getElementById('highScoresData').value = encodeScores(highScores);
     }
     function updateHighScores() {
       const ol = document.getElementById("highScores");
@@ -698,13 +815,27 @@
       });
     }
     function loadHighScores() {
-      try {
-        const data = localStorage.getItem('tetrisHighScores');
-        if (data) {
-          highScores = JSON.parse(data);
+      // Try to load from hidden textarea first
+      const ta = document.getElementById('highScoresData');
+      let loaded = false;
+      if (ta && ta.value) {
+        const decoded = decodeScores(ta.value);
+        if (Array.isArray(decoded)) {
+          highScores = decoded;
+          loaded = true;
         }
-      } catch (e) { highScores = []; }
+      }
+      if (!loaded) {
+        try {
+          const data = localStorage.getItem('tetrisHighScores');
+          if (data) {
+            highScores = JSON.parse(data);
+          }
+        } catch (e) { highScores = []; }
+      }
       updateHighScores();
+      // Sync textarea with latest
+      if (ta) ta.value = encodeScores(highScores);
     }
     // Mouse drag and click for moving/rotating pieces
     let dragStartX = null;
@@ -712,8 +843,7 @@
     let dragging = false;
     let lastDragCol = null;
     let pieceDroppedByDrag = false;
-    const boardDiv = document.getElementById("board");
-    boardDiv.addEventListener("mousedown", function (e) {
+    document.addEventListener("mousedown", function (e) {
       if (e.button !== 0) return;
       dragStartX = e.clientX;
       dragStartY = e.clientY;
@@ -721,7 +851,7 @@
       dragging = true;
       pieceDroppedByDrag = false;
     });
-    boardDiv.addEventListener("mousemove", function (e) {
+    document.addEventListener("mousemove", function (e) {
       if (!dragging) return;
       let dx = e.clientX - dragStartX;
       let dy = e.clientY - dragStartY;
@@ -743,18 +873,18 @@
         dragging = false;
       }
     });
-    boardDiv.addEventListener("mouseup", function (e) {
+    document.addEventListener("mouseup", function (e) {
       if (!dragging) return;
       dragging = false;
     });
-    boardDiv.addEventListener("wheel", function (e) {
+    document.addEventListener("wheel", function (e) {
       e.preventDefault();
       rotate();
-    });
-    boardDiv.addEventListener("mouseleave", function (e) {
+    }, { passive: false });
+    document.addEventListener("mouseleave", function (e) {
       dragging = false;
     });
-    boardDiv.addEventListener("contextmenu", function (e) {
+    document.addEventListener("contextmenu", function (e) {
       e.preventDefault();
     });
     document.addEventListener('DOMContentLoaded', function () {
