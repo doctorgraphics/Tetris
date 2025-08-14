@@ -2,36 +2,69 @@
 <html lang="en">
 
 <head>
-  <meta charset="UTF-8">
-  <title>Tetris Index</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f4f4f4;
-      text-align: center;
-      margin-top: 80px;
-    }
-
-    a {
-      display: inline-block;
-      padding: 18px 36px;
-      font-size: 1.5em;
-      background: #3498db;
-      color: #fff;
-      border-radius: 8px;
-      text-decoration: none;
-      transition: background 0.2s;
-    }
-
-    a:hover {
-      background: #217dbb;
-    }
-  </style>
+  <meta charset="utf-8" />
+  <title>Tetris</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preload" href="styles.css" as="style">
+  <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
-  <h1>Welcome to Tetris!</h1>
-  <a href="Tetris.html">Play Tetris</a>
+  <h1>Tetris</h1>
+
+  <div class="topbar">
+    <span id="score">Score: 0</span>
+    <button id="btnNew">New Game</button>
+    <button id="autoBtn">Auto Play</button>
+    <span class="speeds">
+      <b>Speed:</b>
+      <label><input type="radio" name="speedMode" value="Slow" checked> Slow</label>
+      <label><input type="radio" name="speedMode" value="Normal"> Normal</label>
+      <label><input type="radio" name="speedMode" value="Fast"> Fast</label>
+      <label><input type="radio" name="speedMode" value="Impossible"> Impossible</label>
+    </span>
+  </div>
+
+  <div class="layout">
+    <div class="playcol">
+      <div class="playrow">
+        <canvas id="boardCanvas" width="200" height="400" aria-label="Tetris board"></canvas>
+
+        <div class="sidepanel">
+          <div class="nextLabel">Next Piece:</div>
+          <canvas id="nextCanvas" width="100" height="100"></canvas>
+          <div id="gameStats" class="stats"></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="btnLeft">Left</button>
+        <button id="btnRotate">Rotate</button>
+        <button id="btnRight">Right</button>
+        <button id="btnDrop">Drop</button>
+      </div>
+    </div>
+
+    <div class="scorescol">
+      <h3>High Scores</h3>
+      <ol id="highScores"></ol>
+    </div>
+  </div>
+
+  <canvas id="fireworks"></canvas>
+  <textarea id="highScoresData" style="display:none;width:100%;height:40px;"></textarea>
+  <button id="resetHighScoresBtn" class="resetBtn">Reset High Scores</button>
+
+  <div id="playerNamePrompt" role="dialog" aria-modal="true" class="promptWrap">
+    <div class="dialog">
+      <div class="title">New High Score!</div>
+      <label for="playerNameInput">Enter your name:</label>
+      <input id="playerNameInput" maxlength="24" />
+      <button id="btnNameOk">OK</button>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
 </body>
 
 </html>
