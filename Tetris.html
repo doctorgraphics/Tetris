@@ -260,13 +260,13 @@
 
       // Attract mode (banner + cycling high scores)
       const ATTRACT_TICK_MS = 120;
-      const ATTRACT_RESPAWN_MS = 5000;
+      const ATTRACT_RESPAWN_MS = 1500;
       let attractInterval = null;
       let attractColor = null;
 
       // Attract “message” structure = array of lines (1..3)
       // Banner (always first in cycle)
-      const BANNER = ["LET'S", "PLAY", "TETRIS!"];
+      const BANNER = ["Let's", "Play", "Tetris!"];
 
       // Runtime for attract animation
       let attractMsg = BANNER.slice();
@@ -620,21 +620,99 @@
         return { col: bestCol, rot: bestRot };
       }
 
-      function attemptFloorSlide() {
-        if (typeof current.targetCol !== 'number') return false;
-        const dirToTarget = current.col < current.targetCol ? 1 : (current.col > current.targetCol ? -1 : 0);
-        const tryDirs = dirToTarget !== 0 ? [dirToTarget, -dirToTarget] : [-1, 1];
-        for (const d of tryDirs) {
-          if (canMove(0, d)) {
-            current.col += d;
-            if (canMove(1, 0)) return true;
-            for (let k = 0; k < 3; k++) {
-              if (!canMove(0, d)) break;
-              current.col += d;
-              if (canMove(1, 0)) return true;
-            }
+      // --- Beneficial floor slide ---------------------------------------------------
+      const SLIDE_MAX_CELLS = 4;      // how far we allow a horizontal slide search
+      const SLIDE_IMPROVEMENT_EPS = 100; // require this much improvement to slide
+
+      function evaluateBoardScore(bd, linesCleared) {
+        // mirror the heuristic used in findBestMove
+        let maxH = 0;
+        for (let c = 0; c < COLS; c++) {
+          for (let r = 0; r < ROWS; r++) {
+            if (bd[r][c]) { maxH = Math.max(maxH, ROWS - r); break; }
           }
         }
+        const survival = maxH > 7;
+        const tetrisBonus = (!survival && linesCleared === 4) ? 3000 : 0;
+        const nonTetrisPenalty = (!survival && linesCleared > 0 && linesCleared < 4) ? -400 : 0;
+        const setupBonus = (!survival && isTetrisSetup(bd)) ? 800 : 0;
+
+        return (
+          - getAggregateHeight(bd) * 0.7
+          - getHoles(bd) * 7
+          - getBumpiness(bd) * 1.5
+          - getWellDepth(bd) * 1.2
+          - getBlockades(bd) * 2
+          + (survival ? 200 * linesCleared : 0)
+          + tetrisBonus + setupBonus + nonTetrisPenalty
+        );
+      }
+
+      function simulateLock(bd, shape, row, col, color) {
+        const tb = bd.map(r => r.slice());
+        for (let tr = 0; tr < shape.length; tr++) {
+          for (let tc = 0; tc < shape[0].length; tc++) {
+            if (shape[tr][tc]) tb[row + tr][col + tc] = color;
+          }
+        }
+        // clear lines on the temp board
+        let lines = 0;
+        for (let r = ROWS - 1; r >= 0; r--) {
+          if (tb[r].every(x => x)) { tb.splice(r, 1); tb.unshift(Array(COLS).fill(0)); lines++; r++; }
+        }
+        return { board: tb, linesCleared: lines };
+      }
+
+      function scoreIfLockHere() {
+        const { board: tb, linesCleared } =
+          simulateLock(board, current.shape, current.row, current.col, current.color);
+        return evaluateBoardScore(tb, linesCleared);
+      }
+
+      function scoreIfSlideTo(targetCol) {
+        // check horizontal path at current.row
+        const dir = Math.sign(targetCol - current.col);
+        let col = current.col, row = current.row;
+
+        for (let step = 0; step < Math.abs(targetCol - current.col); step++) {
+          if (!canPlaceAt(current.shape, col + dir, row, board)) return -Infinity;
+          col += dir;
+        }
+        // must open a downward move (otherwise it's just sideways locking)
+        if (!canPlaceAt(current.shape, col, row + 1, board)) return -Infinity;
+
+        // drop to rest from this new column
+        while (canPlaceAt(current.shape, col, row + 1, board)) row++;
+
+        const { board: tb, linesCleared } =
+          simulateLock(board, current.shape, row, col, current.color);
+        return evaluateBoardScore(tb, linesCleared);
+      }
+
+      function attemptBeneficialFloorSlide() {
+        // baseline = lock right here
+        const baseline = scoreIfLockHere();
+
+        let bestScore = -Infinity;
+        let bestCol = null;
+
+        for (let dx = -SLIDE_MAX_CELLS; dx <= SLIDE_MAX_CELLS; dx++) {
+          if (dx === 0) continue;
+          const targetCol = current.col + dx;
+          if (targetCol < 0 || targetCol > COLS - 1) continue;
+
+          const s = scoreIfSlideTo(targetCol);
+          if (s > bestScore) { bestScore = s; bestCol = targetCol; }
+        }
+
+        // only slide if it clearly improves the outcome
+        if (bestCol != null && bestScore >= baseline + SLIDE_IMPROVEMENT_EPS) {
+          // commit the slide in one tick (we already verified the path)
+          current.col = bestCol;
+          // ensure we actually opened a downward move (guaranteed by scoreIfSlideTo)
+          return true; // caller will call drop() right after
+        }
+
         return false;
       }
 
@@ -663,16 +741,17 @@
         }
 
         if (!canMove(1, 0)) {
-          if (attemptFloorSlide()) {
-            lockFrames = 0; drop(); aiLastDropTime = Date.now(); return;
+          const slid = attemptBeneficialFloorSlide();
+          if (slid) {
+            lockFrames = 0;
+            drop();                 // now it will actually fall
+            aiLastDropTime = Date.now();
+            return;
           }
-          lockFrames++;
-          if (lockFrames >= LOCK_DELAY_STEPS) {
-            drop(); aiLastDropTime = Date.now(); lockFrames = 0;
+
+          else {
+            lockFrames = 0; drop(); aiLastDropTime = Date.now();
           }
-          return;
-        } else {
-          lockFrames = 0; drop(); aiLastDropTime = Date.now();
         }
       }
 
@@ -688,7 +767,6 @@
       function toggleAutoPlay(force) {
         const newState = typeof force === 'boolean' ? force : !autoPlay;
         autoPlay = newState;
-        autoBtn.textContent = autoPlay ? 'Stop Auto Play' : 'Auto Play';
         if (autoPlay) {
           aiLastDropTime = Date.now();
           autoInterval = setInterval(autoPlayStep, SPEED_MS[currentSpeed]);
