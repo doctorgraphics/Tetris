@@ -1,35 +1,80 @@
-// /main.js
-import { createEngine } from "./engine.js";
-import { bindUI } from "./ui.js";
+// main.js — bootstraps Engine + UI, wires events, starts Attract on load
 
-const $ = (s) => document.querySelector(s);
+import { Engine, State, SPEED_MS, SCORE_MULT } from "./engine.js";
+import { UI } from "./ui.js";
 
-window.addEventListener("DOMContentLoaded", () => {
-  const engine = createEngine({
-    boardCanvas: $("#boardCanvas"),
-    nextCanvas: $("#nextCanvas"),
-    scoreEl: $("#score"),
-    statsEl: $("#gameStats"),
-    highListEl: $("#highScores"),
-    base64Box: $("#highScoresData"),
-    fireworks: $("#fireworks"),
-    promptWrap: $("#playerNamePrompt"),
-    promptInput: $("#playerNameInput"),
-  });
-
-  bindUI({
-    engine,
-    btnNew: $("#btnNew"),
-    autoBtn: $("#autoBtn"),
-    btnLeft: $("#btnLeft"),
-    btnRight: $("#btnRight"),
-    btnRotate: $("#btnRotate"),
-    btnDrop: $("#btnDrop"),
-    btnNameOk: $("#btnNameOk"),
-    resetBtn: $("#resetHighScoresBtn"),
-    speedRadios: document.querySelectorAll('input[name="speedMode"]'),
-  });
-
-  // ✅ Step 2 goes here: auto-start Attract mode on load/refresh
-  engine.enterAttract();
+const ui = new UI();
+const engine = new Engine({
+  onRender: (eng, extras) => {
+    if (extras && extras.fireworks) ui.fireworksOnce();
+    if (eng.state === State.ATTRACT) ui.drawAttract();
+    else ui.drawGame(eng);
+  },
+  onStats: (eng) => ui.updateStats(eng),
+  onAttractTick: () => {}, // rendering handled by UI's interval
+  onHighScoresChanged: (list) => ui.updateHighScores(list),
+  onGameOver: (finalScore, wasAuto) => {
+    if (finalScore <= 0) {
+      startAttractCycle();
+      return;
+    }
+    if (wasAuto) {
+      engine.saveHighScore({ name: "AI", score: finalScore }, ui.dataTA);
+      startAttractCycle();
+    } else {
+      ui.promptForName((name) => {
+        engine.saveHighScore({ name, score: finalScore }, ui.dataTA);
+        startAttractCycle();
+      });
+    }
+  },
 });
+
+// expose these so UI can read constants (optional)
+Engine.SPEED_MS = SPEED_MS;
+Engine.SCORE_MULT = SCORE_MULT;
+
+function startAttractCycle() {
+  engine.enterAttract();
+  // cycle: banner → top 10 (name lines + score line), repeat
+  function* queue() {
+    yield ["LET'S", "PLAY", "TETRIS!"];
+    const scores = engine.highScores.slice(0, 10);
+    for (const s of scores) yield ui.makeHighScoreLines(s);
+  }
+  let iter = null;
+  const getNext = () => {
+    if (!iter) iter = queue();
+    const n = iter.next();
+    if (n.done) {
+      iter = null;
+      return ["LET'S", "PLAY", "TETRIS!"];
+    }
+    return n.value;
+  };
+  ui.startAttract(getNext);
+}
+
+function init() {
+  // read CSS vars for grid (in case you tweak)
+  document.documentElement.style.setProperty("--cols", 10);
+  document.documentElement.style.setProperty("--rows", 20);
+
+  // bind controls to engine
+  ui.bindControls(engine);
+
+  // load scores → render them once
+  engine.loadHighScores(ui.dataTA);
+
+  // default speed
+  engine.setSpeed("Slow");
+
+  // draw empty scene & start attract mode immediately on load
+  ui.drawGame(engine);
+  startAttractCycle();
+
+  // prepare a next piece so the first “New Game”/AI start is instant
+  engine.next = engine.next || engine.constructor ? null : null; // harmless; spawn() will set it
+}
+
+init();
