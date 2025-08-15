@@ -38,7 +38,7 @@ function startAttractCycle() {
   engine.enterAttract();
   // cycle: banner → top 10 (name lines + score line), repeat
   function* queue() {
-    yield ["LET'S", "PLAY", "TETRIS!"];
+    yield ["Let's", "Play", "Tetris!"];
     const scores = engine.highScores.slice(0, 10);
     for (const s of scores) yield ui.makeHighScoreLines(s);
   }
@@ -48,7 +48,7 @@ function startAttractCycle() {
     const n = iter.next();
     if (n.done) {
       iter = null;
-      return ["LET'S", "PLAY", "TETRIS!"];
+      return ["Let's", "Play", "Tetris!"];
     }
     return n.value;
   };
