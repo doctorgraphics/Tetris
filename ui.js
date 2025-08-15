@@ -17,6 +17,11 @@ export function bindUI({
     engine.toggleAutoPlay(nowOn);
     autoBtn.dataset.on = String(nowOn);
     autoBtn.textContent = nowOn ? "Stop Auto Play" : "Auto Play";
+
+    // If AI was just turned on while we're in Attract mode, start a game.
+    if (nowOn && engine.state !== "PLAYING") {
+      engine.startNewGame();
+    }
   });
 
   btnLeft.addEventListener("mousedown", () => engine.moveLeft());

@@ -112,6 +112,12 @@ export function createEngine(dom) {
 
   // Public API ------------------------------------------------------
   const api = {
+    get state() {
+      return state;
+    },
+    get autoPlay() {
+      return autoPlay;
+    },
     startNewGame,
     setSpeed,
     toggleAutoPlay,
