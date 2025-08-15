@@ -1,3 +1,4 @@
+// /main.js
 import { createEngine } from "./engine.js";
 import { bindUI } from "./ui.js";
 
@@ -29,6 +30,6 @@ window.addEventListener("DOMContentLoaded", () => {
     speedRadios: document.querySelectorAll('input[name="speedMode"]'),
   });
 
-  // Auto-start attract mode on load
+  // ✅ Step 2 goes here: auto-start Attract mode on load/refresh
   engine.enterAttract();
 });

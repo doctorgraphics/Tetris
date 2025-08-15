@@ -1,4 +1,4 @@
-import { findBestMove, evaluateBoardScore, simulateLock, heur } from "./ai.js";
+import { findBestMove, evaluateBoardScore, simulateLock } from "./ai.js";
 
 export function createEngine(dom) {
   // ---------- Consts ----------
