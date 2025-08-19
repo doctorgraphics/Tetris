@@ -24,7 +24,7 @@ export class UI {
     this.attractY = 0;
     this.attractMode = "scroll";
     this.attractColor = "#888";
-    this.attractLines = ["Let\u2019s", "Play", "Tetris!"];
+    this.attractLines = ["Lets", "Play", "Tetris!"];
     this.ATTRACT_TICK_MS = 120;
     this.ATTRACT_RESPAWN_MS = 1500;
 
