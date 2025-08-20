@@ -161,57 +161,69 @@ export class UI {
   }
 
   /* ---------- attract mode ---------- */
-  startAttract(getNextMessage) {
-    this.stopAttract();
-    const centerY = (lines) => Math.floor((ROWS - lines.length) / 2);
-    const centerX = (lines) => {
-      const width = Math.max(...lines.map((s) => s.length));
-      return Math.floor((COLS - width) / 2);
-    };
-    const pieceColor = () => {
-      const colors = [
-        "#ff5252",
-        "#ffd700",
-        "#00e6ff",
-        "#a259f7",
-        "#00d100",
-        "#ff7f00",
-        "#3498db",
-      ];
-      return colors[(Math.random() * colors.length) | 0];
-    };
+     startAttract(getNextMessage) {
+     this.stopAttract();
+     const centerY = (lines) => Math.floor((ROWS - lines.length) / 2);
+     const centerX = (lines) => {
+       const width = Math.max(...lines.map((s) => s.length));
+       return Math.floor((COLS - width) / 2);
+     };
+     const pieceColor = () => {
+       const colors = [
+         "#ff5252",
+         "#ffd700",
+         "#00e6ff",
+         "#a259f7",
+         "#00d100",
+         "#ff7f00",
+         "#3498db",
+       ];
+       return colors[(Math.random() * colors.length) | 0];
+     };
 
-    let queueNext = () => {
-      const msg = getNextMessage();
-      this.attractLines = msg.slice();
-      this.attractX = COLS;
-      this.attractY = centerY(this.attractLines);
-      this.attractMode = "scroll";
-      this.attractColor = pieceColor();
-    };
+-    let queueNext = () => {
+-      const msg = getNextMessage();
+-      this.attractLines = msg.slice();
+-      this.attractX = COLS;
+-      this.attractY = centerY(this.attractLines);
+-      this.attractMode = "scroll";
+-      this.attractColor = pieceColor();
+-    };
++    let queueNext = () => {
++      const msg = getNextMessage();
++      if (!msg) return false;              // <- allow caller to end the loop
++      this.attractLines = msg.slice();
++      this.attractX = COLS;
++      this.attractY = centerY(this.attractLines);
++      this.attractMode = "scroll";
++      this.attractColor = pieceColor();
++      return true;
++    };
 
-    queueNext();
-    this.attractTick = setInterval(() => {
-      if (this.attractMode === "scroll") {
-        const target = centerX(this.attractLines);
-        if (this.attractX > target) this.attractX--;
-        else this.attractMode = "drop";
-      } else {
-        this.attractY++;
-        if (this.attractY > ROWS) {
-          clearInterval(this.attractTick);
-          setTimeout(() => {
-            queueNext();
-            this.startAttract(getNextMessage);
-          }, this.ATTRACT_RESPAWN_MS);
-          return;
-        }
-      }
-      this.drawAttract();
-    }, this.ATTRACT_TICK_MS);
+-    queueNext();
++    if (!queueNext()) return;              // <- bail if no more messages
+     this.attractTick = setInterval(() => {
+       if (this.attractMode === "scroll") {
+         const target = centerX(this.attractLines);
+         if (this.attractX > target) this.attractX--;
+         else this.attractMode = "drop";
+       } else {
+         this.attractY++;
+         if (this.attractY > ROWS) {
+           clearInterval(this.attractTick);
+           setTimeout(() => {
+-            queueNext();
+-            this.startAttract(getNextMessage);
++            if (queueNext()) this.startAttract(getNextMessage); // only continue if there’s another message
+           }, this.ATTRACT_RESPAWN_MS);
+           return;
+         }
+       }
+       this.drawAttract();
+     }, this.ATTRACT_TICK_MS);
 
-    this.drawAttract();
-  }
+     this.drawAttract();
+   }
 
   stopAttract() {
     if (this.attractTick) clearInterval(this.attractTick);
