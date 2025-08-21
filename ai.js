@@ -19,11 +19,11 @@ function deepCopy(m) {
   return m.map((r) => r.slice());
 }
 
-function getAggregateHeight(bd) {
+function getAggregateHeight(board) {
   let total = 0;
   for (let c = 0; c < COLS; c++) {
     for (let r = 0; r < ROWS; r++) {
-      if (bd[r][c]) {
+      if (board[r][c]) {
         total += ROWS - r;
         break;
       }
@@ -31,72 +31,78 @@ function getAggregateHeight(bd) {
   }
   return total;
 }
-function getHoles(bd) {
+
+function getHoles(board) {
   let holes = 0;
   for (let c = 0; c < COLS; c++) {
     let block = false;
     for (let r = 0; r < ROWS; r++) {
-      if (bd[r][c]) block = true;
+      if (board[r][c]) block = true;
       else if (block) holes++;
     }
   }
   return holes;
 }
-function getColumnHeights(bd) {
-  const h = new Array(COLS).fill(0);
+
+function getColumnHeights(board) {
+  const heights = new Array(COLS).fill(0);
   for (let c = 0; c < COLS; c++) {
     for (let r = 0; r < ROWS; r++) {
-      if (bd[r][c]) {
-        h[c] = ROWS - r;
+      if (board[r][c]) {
+        heights[c] = ROWS - r;
         break;
       }
     }
   }
-  return h;
+  return heights;
 }
-function getBumpiness(bd) {
-  const h = getColumnHeights(bd);
-  let s = 0;
-  for (let i = 0; i < h.length - 1; i++) s += Math.abs(h[i] - h[i + 1]);
-  return s;
+
+function getBumpiness(board) {
+  const heights = getColumnHeights(board);
+  let sum = 0;
+  for (let i = 0; i < heights.length - 1; i++) sum += Math.abs(heights[i] - heights[i + 1]);
+  return sum;
 }
-function getWellDepth(bd) {
-  let t = 0;
+
+function getWellDepth(board) {
+  let total = 0;
   for (let c = 0; c < COLS; c++) {
     for (let r = 0; r < ROWS; r++) {
       if (
-        !bd[r][c] &&
-        (c === 0 || bd[r][c - 1]) &&
-        (c === COLS - 1 || bd[r][c + 1])
+        !board[r][c] &&
+        (c === 0 || board[r][c - 1]) &&
+        (c === COLS - 1 || board[r][c + 1])
       ) {
-        let d = 1,
+        let depth = 1,
           rr = r + 1;
-        while (rr < ROWS && !bd[rr][c]) {
-          d++;
+        while (rr < ROWS && !board[rr][c]) {
+          depth++;
           rr++;
         }
-        t += d;
+        total += depth;
       }
     }
   }
-  return t;
+  return total;
 }
-function getBlockades(bd) {
-  let b = 0;
+
+function getBlockades(board) {
+  let blockades = 0;
   for (let c = 0; c < COLS; c++) {
     let hole = false;
     for (let r = 0; r < ROWS; r++) {
-      if (!bd[r][c]) hole = true;
-      else if (hole) b++;
+      if (!board[r][c]) hole = true;
+      else if (hole) blockades++;
     }
   }
-  return b;
+  return blockades;
 }
-function isTetrisSetup(bd) {
+
+function isTetrisSetup(board) {
   for (const c of [0, COLS - 1]) {
     let well = 0;
     for (let r = ROWS - 1; r >= 0; r--) {
-      if (!bd[r][c]) well++;
+      if (!board[r][c]) well++;
       else break;
     }
     if (well >= 4) return true;
@@ -104,37 +110,35 @@ function isTetrisSetup(bd) {
   return false;
 }
 
-export function findBestMove(board, current, next, ROWS_, COLS_) {
-  // one-piece heuristic w/ “survival” mode if stack is tall
+export function findBestMove(board, current, next) {
   let bestScore = -Infinity,
     bestCol = 0,
     bestRot = 0;
   const origShape = current.shape,
     origColor = current.color;
 
-  const evalBoard = (bd, linesCleared) => {
-    let maxH = 0;
+  const evaluateBoard = (board, linesCleared) => {
+    let maxHeight = 0;
     for (let c = 0; c < COLS; c++) {
       for (let r = 0; r < ROWS; r++) {
-        if (bd[r][c]) {
-          maxH = Math.max(maxH, ROWS - r);
+        if (board[r][c]) {
+          maxHeight = Math.max(maxHeight, ROWS - r);
           break;
         }
       }
     }
-    const survival = maxH > 7;
-    const tetrisBonus = !survival && linesCleared === 4 ? 3000 : 0;
-    const nonTetrisPenalty =
-      !survival && linesCleared > 0 && linesCleared < 4 ? -400 : 0;
-    const setupBonus = !survival && isTetrisSetup(bd) ? 800 : 0;
+    const isSurvivalMode = maxHeight > 7;
+    const tetrisBonus = !isSurvivalMode && linesCleared === 4 ? 3000 : 0;
+    const nonTetrisPenalty = !isSurvivalMode && linesCleared > 0 && linesCleared < 4 ? -400 : 0;
+    const setupBonus = !isSurvivalMode && isTetrisSetup(board) ? 800 : 0;
 
     return (
-      -getAggregateHeight(bd) * 0.7 -
-      getHoles(bd) * 7 -
-      getBumpiness(bd) * 1.5 -
-      getWellDepth(bd) * 1.2 -
-      getBlockades(bd) * 2 +
-      (survival ? 200 * linesCleared : 0) +
+      -getAggregateHeight(board) * 0.7 -
+      getHoles(board) * 7 -
+      getBumpiness(board) * 1.5 -
+      getWellDepth(board) * 1.2 -
+      getBlockades(board) * 2 +
+      (isSurvivalMode ? 200 * linesCleared : 0) +
       tetrisBonus +
       setupBonus +
       nonTetrisPenalty
@@ -151,15 +155,15 @@ export function findBestMove(board, current, next, ROWS_, COLS_) {
       let row = 0;
       while (canPlaceAt(shape, col, row + 1, board)) row++;
 
-      const tb = deepCopy(board);
+      const testBoard = deepCopy(board);
       for (let tr = 0; tr < shape.length; tr++)
         for (let tc = 0; tc < shape[0].length; tc++)
-          if (shape[tr][tc]) tb[row + tr][col + tc] = origColor;
+          if (shape[tr][tc]) testBoard[row + tr][col + tc] = origColor;
 
-      let lines = 0;
-      for (let rr = 0; rr < ROWS; rr++) if (tb[rr].every((x) => x)) lines++;
+      let linesCleared = 0;
+      for (let rr = 0; rr < ROWS; rr++) if (testBoard[rr].every((x) => x)) linesCleared++;
 
-      const score = evalBoard(tb, lines);
+      const score = evaluateBoard(testBoard, linesCleared);
       if (score > bestScore) {
         bestScore = score;
         bestCol = col;

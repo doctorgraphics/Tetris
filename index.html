@@ -1,75 +1,104 @@
-<!DOCTYPE html>
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tetris</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="preload" href="./style.css" as="style">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="main.js"></script>
 </head>
-
 <body>
-  <header class="topbar">
+  <div class="topbar">
     <h1>Tetris</h1>
     <div class="hud">
-      <span id="score" aria-live="polite">Score: 0</span>
+      <div id="score">Score: 0</div>
       <button id="btnNew" class="btn">New Game</button>
       <button id="autoBtn" class="btn">Auto Play</button>
-      <span class="speed">
-        <b>Speed:</b>
+      <div class="speed">
+        Speed:
         <label><input type="radio" name="speedMode" value="Slow" checked> Slow</label>
         <label><input type="radio" name="speedMode" value="Normal"> Normal</label>
         <label><input type="radio" name="speedMode" value="Fast"> Fast</label>
         <label><input type="radio" name="speedMode" value="Impossible"> Impossible</label>
-      </span>
+      </div>
     </div>
-  </header>
+  </div>
 
-  <main class="wrap">
-    <section class="stage">
-      <div id="board" aria-label="Tetris board"></div>
-      <aside class="sidebar">
-        <div class="nextWrap">
-          <div class="nextTitle">Next Piece:</div>
-          <div id="nextPiece" class="nextBox"></div>
-        </div>
+  <div class="wrap">
+    <div class="stage">
+      <div id="board"></div>
+      <div class="sidebar">
+        <div class="nextTitle">Next Piece:</div>
+        <div id="nextPiece" class="nextBox"></div>
         <div id="gameStats" class="stats"></div>
-      </aside>
-    </section>
+        <div class="controls">
+          <button id="btnLeft" class="btn">Left</button>
+          <button id="btnRotate" class="btn">Rotate</button>
+          <button id="btnRight" class="btn">Right</button>
+          <button id="btnDrop" class="btn">Drop</button>
+        </div>
+      </div>
+    </div>
 
-    <section class="controls">
-      <button id="btnLeft" class="btn">Left</button>
-      <button id="btnRotate" class="btn">Rotate</button>
-      <button id="btnRight" class="btn">Right</button>
-      <button id="btnDrop" class="btn">Drop</button>
-    </section>
-
-    <section class="scores">
+    <div class="scores">
       <h3>High Scores</h3>
-      <ol id="highScores" class="highScores"></ol>
-    </section>
-  </main>
+      <ul id="highScores" class="highScores"></ul>
+    </div>
+  </div>
 
-  <canvas id="fireworks"></canvas>
+  <div id="fireworks"></div>
 
-  <!-- Optional mirror store for base64 export/import compatibility -->
-  <textarea id="highScoresData" class="hidden"></textarea>
-
-  <div id="playerNamePrompt" role="dialog" aria-modal="true" class="modal">
+  <div id="playerNamePrompt" class="modal">
     <div class="dialog">
       <div class="title">New High Score!</div>
-      <label for="playerNameInput">Enter your name:</label>
-      <input id="playerNameInput" maxlength="24" />
+      <div>Enter your name:</div>
+      <input id="playerNameInput" type="text">
       <div class="row">
         <button id="btnNameOk" class="btn">OK</button>
       </div>
     </div>
   </div>
 
-  <button id="resetHighScoresBtn" class="resetBtn" title="Reset High Scores">Reset High Scores</button>
-
-  <script type="module" src="./main.js"></script>
+  <textarea id="highScoresData" class="hidden"></textarea>
+  <button id="resetHighScoresBtn" class="resetBtn">Reset High Scores</button>
 </body>
-
 </html>
