@@ -1,18 +1,122 @@
-```javascript
-// engine.js — core state, physics, scoring, storage
+// engine.js — Manages Tetris game state, physics, scoring, and high score storage
 
-// ... (previous imports and constants unchanged)
+import { findBestMove } from "./ai.js";
+
+// Game board dimensions
+export const ROWS = 20;
+export const COLS = 10;
+
+// Speed settings (milliseconds per gravity tick) and score multipliers
+export const SPEED_MS = { Slow: 400, Normal: 120, Fast: 55, Impossible: 18 };
+export const SCORE_MULT = { Slow: 0.75, Normal: 1, Fast: 1.5, Impossible: 2 };
+
+// Tetromino shapes and colors
+export const SHAPES = [
+  { shape: [[1, 1, 1, 1]], color: "#00c3ff" }, // I
+  { shape: [[1, 1], [1, 1]], color: "#ffe600" }, // O
+  { shape: [[0, 1, 0], [1, 1, 1]], color: "#a259f7" }, // T
+  { shape: [[1, 0, 0], [1, 1, 1]], color: "#0051ba" }, // J
+  { shape: [[0, 0, 1], [1, 1, 1]], color: "#ff7f00" }, // L
+  { shape: [[1, 1, 0], [0, 1, 1]], color: "#00d100" }, // S
+  { shape: [[0, 1, 1], [1, 1, 0]], color: "#ff1e56" }, // Z
+];
+
+// Game states
+export const State = { ATTRACT: "ATTRACT", PLAYING: "PLAYING" };
+
+// Utility functions
+export const deepCopy = (matrix) => matrix.map((row) => row.slice());
+
+export const rotateMatrix = (matrix) =>
+  matrix[0].map((_, i) => matrix.map((row) => row[i]).reverse());
+
+const randomShape = () => SHAPES[Math.floor(Math.random() * SHAPES.length)];
 
 export class Engine {
-  // ... (previous constructor and methods unchanged)
+  constructor(hooks = {}) {
+    // Game state
+    this.state = State.ATTRACT;
+    this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+    this.current = { shape: null, color: null, row: 0, col: 3 };
+    this.next = null;
+    this.score = 0;
+    this.shapesSeen = 0;
+    this.linesCompleted = 0;
+    this.tetrises = 0;
+    this.speed = "Slow";
+    this.lineBonusMultiplier = 1;
+    this.autoPlay = false;
+    this.aiInFlight = false;
+    this.lockFrames = 0;
+    this.LOCK_DELAY_STEPS = 3;
+    this.running = false;
+    this.lastTime = 0;
+    this.acc = 0;
+    this.aiStallCounter = 0;
+    this.highScores = [];
 
+    // Callbacks for UI updates
+    this.hooks = {
+      onRender: hooks.onRender || (() => {}),
+      onStats: hooks.onStats || (() => {}),
+      onGameOver: hooks.onGameOver || (() => {}),
+      onAttractTick: hooks.onAttractTick || (() => {}),
+      onHighScoresChanged: hooks.onHighScoresChanged || (() => {}),
+    };
+  }
+
+  // Returns gravity interval based on current speed
+  getGravityMs() {
+    return SPEED_MS[this.speed] || 120;
+  }
+
+  // Sets game speed and updates stats
+  setSpeed(mode) {
+    this.speed = mode in SPEED_MS ? mode : "Normal";
+    this.hooks.onStats(this);
+  }
+
+  // Initializes an empty board
+  resetBoard() {
+    this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  }
+
+  // Starts a new game
+  start() {
+    this.state = State.PLAYING;
+    this.resetBoard();
+    this.current = { shape: null, color: null, row: 0, col: 3 };
+    this.score = 0;
+    this.shapesSeen = 0;
+    this.linesCompleted = 0;
+    this.tetrises = 0;
+    this.next = null;
+    this.lockFrames = 0;
+    this.aiStallCounter = 0;
+    this.spawn();
+    this.run();
+    this.hooks.onRender(this);
+    this.hooks.onStats(this);
+  }
+
+  // Enters attract mode (demo state)
+  enterAttract() {
+    this.state = State.ATTRACT;
+    this.resetBoard();
+    this.current = { shape: null, color: null, row: 0, col: 3 };
+    this.score = 0;
+    this.running = false;
+    this.hooks.onRender(this);
+    this.hooks.onStats(this);
+  }
+
+  // Main game loop
   run() {
     if (this.running) return;
     this.running = true;
     this.lastTime = performance.now();
     this.acc = 0;
-    this.aiStallCounter = 0; // Track stalled AI attempts
-    const MAX_AI_ATTEMPTS = 10; // Prevent infinite AI loops
+    const MAX_AI_ATTEMPTS = 10;
 
     const tick = (now) => {
       if (!this.running) return;
@@ -36,7 +140,7 @@ export class Engine {
           this.current.targetCol = best.col;
           this.current.targetRot = best.rot;
           this.current.rotationsLeft = best.rot;
-          this.aiStallCounter = 0; // Reset stall counter on new piece
+          this.aiStallCounter = 0;
         }
 
         if (this.current.rotationsLeft && this.current.rotationsLeft > 0) {
@@ -51,13 +155,15 @@ export class Engine {
         }
 
         if (!this.canMove(1, 0)) {
-          if (this.attemptSmartFloorSlide()) moved = true;
+          if (this.attemptSmartFloorSlide()) {
+            moved = true;
+            if (!this.canMove(1, 0)) this.lockFrames++;
+          }
         }
 
-        // Force merge if AI is stalled
-        if (!moved) {
+        if (!moved && !this.canMove(1, 0)) {
           this.aiStallCounter++;
-          if (this.aiStallCounter >= MAX_AI_ATTEMPTS && !this.canMove(1, 0)) {
+          if (this.aiStallCounter >= MAX_AI_ATTEMPTS) {
             this.merge();
             this.spawn();
             this.aiStallCounter = 0;
@@ -67,9 +173,9 @@ export class Engine {
         this.aiInFlight = false;
       }
 
-      while (this.acc >= this.gravityMs()) {
+      while (this.acc >= this.getGravityMs()) {
         this.drop();
-        this.acc -= this.gravityMs();
+        this.acc -= this.getGravityMs();
       }
 
       this.hooks.onRender(this);
@@ -78,172 +184,188 @@ export class Engine {
     requestAnimationFrame(tick);
   }
 
-  attemptSmartFloorSlide() {
-    const origCol = this.current.col;
-    let bestScore = -Infinity, bestCol = origCol;
-
-    // Try sliding up to 3 columns left or right for more flexibility
-    for (let dc = -3; dc <= 3; dc++) {
-      const newCol = this.current.col + dc;
-      if (this.canMove(0, dc)) {
-        const { board: simBoard, linesCleared } = this.#simulateLock(this.current.row, newCol);
-        const score =
-          -this.#countHoles(simBoard) * 7 -
-          this.#getBumpiness(simBoard) * 1.5 +
-          linesCleared * 200;
-        if (score > bestScore) {
-          bestScore = score;
-          bestCol = newCol;
+  // Checks if a piece can move or rotate
+  canMove(dr, dc, shape = this.current.shape, row = this.current.row, col = this.current.col) {
+    for (let r = 0; r < shape.length; r++) {
+      for (let c = 0; c < shape[0].length; c++) {
+        if (!shape[r][c]) continue;
+        const nr = row + r + dr;
+        const nc = col + c + dc;
+        if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || this.board[nr][nc]) {
+          return false;
         }
       }
     }
+    return true;
+  }
 
-    if (bestCol !== origCol) {
-      this.current.col = bestCol;
-      this.lockFrames = 0; // Reset lock delay to give AI time to settle
+  // Moves the piece left or right
+  move(dc) {
+    if (this.canMove(0, dc)) {
+      this.current.col += dc;
+      this.lockFrames = 0;
       return true;
     }
     return false;
   }
 
-  // ... (remaining methods unchanged)
-}
-```
+  // Rotates the piece with wall-kick attempts
+  rotate() {
+    const rotated = rotateMatrix(this.current.shape);
+    for (let offset = 0; offset < this.current.shape[0].length; offset++) {
+      if (this.canMove(0, 0, rotated)) {
+        this.current.shape = rotated;
+        this.lockFrames = 0;
+        return true;
+      }
+      if (this.canMove(0, -1, rotated)) {
+        this.current.col--;
+        this.current.shape = rotated;
+        this.lockFrames = 0;
+        return true;
+      }
+      if (this.canMove(0, 1, rotated)) {
+        this.current.col++;
+        this.current.shape = rotated;
+        this.lockFrames = 0;
+        return true;
+      }
+    }
+    return false;
+  }
 
-#### Modified `ai.js`
-The `findBestMove` function is updated to:
-- Validate that the chosen position is reachable by simulating the piece’s descent.
-- Add a fallback to ensure a valid move is always returned, even if suboptimal.
+  // Drops the piece one row or locks it
+  drop() {
+    if (this.canMove(1, 0)) {
+      this.current.row++;
+      this.lockFrames = 0;
+    } else {
+      this.lockFrames++;
+      if (this.lockFrames >= this.LOCK_DELAY_STEPS) {
+        this.merge();
+        this.spawn();
+      }
+    }
+  }
 
-<xaiArtifact artifact_id="f7dc3509-16a2-4244-a984-e59821dd735d" artifact_version_id="bf554c25-ae22-4944-b3ac-46b8483eab5d" title="ai.js" contentType="application/javascript" partial="true">
-```javascript
-// ai.js — simple 1-piece lookahead + board heuristic
+  // Merges the current piece into the board and handles line clears
+  merge() {
+    const { shape, color, row, col } = this.current;
+    for (let r = 0; r < shape.length; r++) {
+      for (let c = 0; c < shape[0].length; c++) {
+        if (shape[r][c]) {
+          this.board[row + r][col + c] = color;
+        }
+      }
+    }
 
-// ... (previous imports and helper functions unchanged)
+    let cleared = 0;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (this.board[r].every((x) => x)) {
+        this.board.splice(r, 1);
+        this.board.unshift(Array(COLS).fill(0));
+        cleared++;
+        r++;
+      }
+    }
 
-export function findBestMove(board, current, next) {
-  let bestScore = -Infinity,
-    bestCol = current.col, // Default to current column
-    bestRot = 0;
-  const origShape = current.shape,
-    origColor = current.color;
+    if (cleared) {
+      let bonus = cleared === 4 ? 800 : 0;
+      if (cleared === 4) {
+        this.tetrises++;
+        this.hooks.onRender(this, { fireworks: true });
+      }
+      this.linesCompleted += cleared;
+      this.lineBonusMultiplier = 1 + this.linesCompleted * 0.001;
+      const mult = (SCORE_MULT[this.speed] || 1) * this.lineBonusMultiplier;
+      this.score += Math.round((cleared * 100 + bonus) * mult);
+      this.hooks.onStats(this);
+    }
+  }
 
-  const evaluateBoard = (board, linesCleared) => {
-    let maxHeight = 0;
+  // Spawns a new piece
+  spawn() {
+    if (!this.next) this.next = randomShape();
+    this.current = {
+      shape: deepCopy(this.next.shape),
+      color: this.next.color,
+      row: 0,
+      col: 3,
+    };
+    this.next = randomShape();
+    this.shapesSeen++;
+    this.hooks.onStats(this);
+
+    if (!this.canMove(0, 0)) {
+      this.gameOver();
+    }
+  }
+
+  // Ends the game and transitions to attract mode
+  gameOver() {
+    const final = this.score;
+    const wasAuto = this.autoPlay;
+    this.enterAttract();
+    this.hooks.onGameOver(final, wasAuto);
+  }
+
+  // Heuristic calculations for smart floor slide
+  #countHoles(board) {
+    let holes = 0;
+    for (let c = 0; c < COLS; c++) {
+      let block = false;
+      for (let r = 0; r < ROWS; r++) {
+        if (board[r][c]) block = true;
+        else if (block) holes++;
+      }
+    }
+    return holes;
+  }
+
+  #getColumnHeights(board) {
+    const heights = new Array(COLS).fill(0);
     for (let c = 0; c < COLS; c++) {
       for (let r = 0; r < ROWS; r++) {
         if (board[r][c]) {
-          maxHeight = Math.max(maxHeight, ROWS - r);
+          heights[c] = ROWS - r;
           break;
         }
       }
     }
-    const isSurvivalMode = maxHeight > 7;
-    const tetrisBonus = !isSurvivalMode && linesCleared === 4 ? 3000 : 0;
-    const nonTetrisPenalty = !isSurvivalMode && linesCleared > 0 && linesCleared < 4 ? -400 : 0;
-    const setupBonus = !isSurvivalMode && isTetrisSetup(board) ? 800 : 0;
-
-    return (
-      -getAggregateHeight(board) * 0.7 -
-      getHoles(board) * 7 -
-      getBumpiness(board) * 1.5 -
-      getWellDepth(board) * 1.2 -
-      getBlockades(board) * 2 +
-      (isSurvivalMode ? 200 * linesCleared : 0) +
-      tetrisBonus +
-      setupBonus +
-      nonTetrisPenalty
-    );
-  };
-
-  let validMoveFound = false;
-  for (let rot = 0; rot < 4; rot++) {
-    let shape = origShape;
-    for (let r = 0; r < rot; r++) shape = rotateMatrix(shape);
-
-    for (let col = -2; col < COLS; col++) {
-      if (!canPlaceAt(shape, col, 0, board)) continue;
-
-      let row = 0;
-      while (canPlaceAt(shape, col, row + 1, board)) row++;
-
-      // Validate reachability
-      let canReach = true;
-      for (let r = 0; r < row; r++) {
-        if (!canPlaceAt(shape, col, r, board)) {
-          canReach = false;
-          break;
-        }
-      }
-      if (!canReach) continue;
-
-      const testBoard = deepCopy(board);
-      for (let tr = 0; tr < shape.length; tr++)
-        for (let tc = 0; tc < shape[0].length; tc++)
-          if (shape[tr][tc]) testBoard[row + tr][col + tc] = origColor;
-
-      let linesCleared = 0;
-      for (let rr = 0; rr < ROWS; rr++) if (testBoard[rr].every((x) => x)) linesCleared++;
-
-      const score = evaluateBoard(testBoard, linesCleared);
-      if (score > bestScore) {
-        bestScore = score;
-        bestCol = col;
-        bestRot = rot;
-        validMoveFound = true;
-      }
-    }
+    return heights;
   }
 
-  // Fallback: if no valid move found, try current shape at current column
-  if (!validMoveFound) {
-    let row = 0;
-    while (canPlaceAt(origShape, current.col, row + 1, board)) row++;
-    if (canPlaceAt(origShape, current.col, row, board)) {
-      bestCol = current.col;
-      bestRot = 0;
-    } else {
-      // Last resort: find any valid column
-      for (let col = 0; col < COLS; col++) {
-        if (canPlaceAt(origShape, col, 0, board)) {
-          bestCol = col;
-          bestRot = 0;
-          break;
-        }
-      }
-    }
+  #getBumpiness(board) {
+    const heights = this.#getColumnHeights(board);
+    return heights.slice(0, -1).reduce((sum, h, i) => sum + Math.abs(h - heights[i + 1]), 0);
   }
 
-  return { col: bestCol, rot: bestRot };
-}
-```
+  #simulateLock(row, col) {
+    const testBoard = deepCopy(this.board);
+    const { shape, color } = this.current;
+    for (let tr = 0; tr < shape.length; tr++) {
+      for (let tc = 0; tc < shape[0].length; tc++) {
+        if (shape[tr][tc]) testBoard[row + tr][col + tc] = color;
+      }
+    }
+    let linesCleared = 0;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (testBoard[r].every((x) => x)) {
+        testBoard.splice(r, 1);
+        testBoard.unshift(Array(COLS).fill(0));
+        linesCleared++;
+        r++;
+      }
+    }
+    return { board: testBoard, linesCleared };
+  }
 
-### Explanation of Changes
-1. **AI Stall Counter** (`engine.js`):
-   - Added `aiStallCounter` and `MAX_AI_ATTEMPTS` to track consecutive failed AI moves.
-   - If the AI cannot move or rotate (`moved` is `false`) and the piece is grounded (`!this.canMove(1, 0)`), it increments the counter. After 10 failed attempts, it forces a `merge` and `spawn` to prevent hanging.
-   - Resets the counter when a new piece spawns to avoid premature merging.
+  // Attempts to slide the piece left or right when grounded
+  attemptSmartFloorSlide() {
+    const origCol = this.current.col;
+    let bestScore = -Infinity, bestCol = origCol;
 
-2. **Enhanced `attemptSmartFloorSlide`** (`engine.js`):
-   - Expanded the slide range from `[-1, 1]` to `[-3, 3]` to allow more flexibility when the piece is grounded.
-   - Returns `true` if a slide occurs to signal movement, helping the stall counter logic.
-   - Resets `lockFrames` when a slide occurs to give the AI time to settle the piece.
-
-3. **Reachability Check in `findBestMove`** (`ai.js`):
-   - Added a `canReach` check to ensure the target position (column and rotation) is reachable by simulating the piece’s descent from row 0 to the target row.
-   - If no valid move is found, falls back to the current column with no rotation, or searches for any valid column as a last resort.
-
-4. **Preserving Lock Delay**:
-   - Ensured `lockFrames` is reset appropriately in `attemptSmartFloorSlide` to avoid premature merging, but the stall counter overrides if the AI is truly stuck.
-
-### Integration Notes
-- These changes are fully compatible with the previously refactored `index.html`, `style.css`, `main.js`, `ui.js`, and `music.js`.
-- The `music.js` file remains unused, so it does not affect the AI fixes. If you integrate music later, ensure it doesn’t interfere with the game loop’s performance.
-- Test the AI in scenarios where the board is nearly full or has complex configurations to verify it no longer hangs. You can simulate this by manually editing `engine.board` in the console to create tall stacks or holes.
-
-### Testing Suggestions
-- **Scenario 1: Full Board**: Start a game, use the console to fill most of the board (e.g., `engine.board.forEach(row => row.fill(1))` and clear a few cells), then enable AI (`engine.autoPlay = true`). Ensure it places pieces without stalling.
-- **Scenario 2: Narrow Columns**: Create a board with narrow gaps (e.g., one-column wells) and test if the AI can place pieces like the I-tetromino.
-- **Scenario 3: Rapid AI Play**: Set `engine.setSpeed("Impossible")` and enable AI to check for hangs under high-speed conditions.
-
-If the AI still hangs in specific cases, please provide details (e.g., board state, piece type, or speed setting), and I can debug further. Let me know if you need help testing or additional tweaks!
+    for (let dc = -3; dc <= 3; dc++) {
+      const newCol = this.current.col + dc;
+      if (this.canMove(0, dc)) {
+        const { board: simBoard, linesCleared } = this.#simulateLock(this
