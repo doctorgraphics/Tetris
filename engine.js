@@ -1,61 +1,103 @@
-// engine.js — Manages Tetris game state, physics, scoring, and high score storage
+// engine.js — core state, physics, scoring, storage
 
 import { findBestMove } from "./ai.js";
 
-// Game board dimensions
 export const ROWS = 20;
 export const COLS = 10;
 
-// Speed settings (milliseconds per gravity tick) and score multipliers
 export const SPEED_MS = { Slow: 400, Normal: 120, Fast: 55, Impossible: 18 };
 export const SCORE_MULT = { Slow: 0.75, Normal: 1, Fast: 1.5, Impossible: 2 };
 
-// Tetromino shapes and colors
 export const SHAPES = [
   { shape: [[1, 1, 1, 1]], color: "#00c3ff" }, // I
-  { shape: [[1, 1], [1, 1]], color: "#ffe600" }, // O
-  { shape: [[0, 1, 0], [1, 1, 1]], color: "#a259f7" }, // T
-  { shape: [[1, 0, 0], [1, 1, 1]], color: "#0051ba" }, // J
-  { shape: [[0, 0, 1], [1, 1, 1]], color: "#ff7f00" }, // L
-  { shape: [[1, 1, 0], [0, 1, 1]], color: "#00d100" }, // S
-  { shape: [[0, 1, 1], [1, 1, 0]], color: "#ff1e56" }, // Z
+  {
+    shape: [
+      [1, 1],
+      [1, 1],
+    ],
+    color: "#ffe600",
+  }, // O
+  {
+    shape: [
+      [0, 1, 0],
+      [1, 1, 1],
+    ],
+    color: "#a259f7",
+  }, // T
+  {
+    shape: [
+      [1, 0, 0],
+      [1, 1, 1],
+    ],
+    color: "#0051ba",
+  }, // J
+  {
+    shape: [
+      [0, 0, 1],
+      [1, 1, 1],
+    ],
+    color: "#ff7f00",
+  }, // L
+  {
+    shape: [
+      [1, 1, 0],
+      [0, 1, 1],
+    ],
+    color: "#00d100",
+  }, // S
+  {
+    shape: [
+      [0, 1, 1],
+      [1, 1, 0],
+    ],
+    color: "#ff1e56",
+  }, // Z
 ];
 
-// Game states
 export const State = { ATTRACT: "ATTRACT", PLAYING: "PLAYING" };
 
-// Utility functions
-export const deepCopy = (matrix) => matrix.map((row) => row.slice());
+export function deepCopy(m) {
+  return m.map((r) => r.slice());
+}
+export function rotateMatrix(m) {
+  return m[0].map((_, i) => m.map((r) => r[i]).reverse());
+}
 
-export const rotateMatrix = (matrix) =>
-  matrix[0].map((_, i) => matrix.map((row) => row[i]).reverse());
-
-const randomShape = () => SHAPES[Math.floor(Math.random() * SHAPES.length)];
+function rngShape() {
+  return SHAPES[Math.floor(Math.random() * SHAPES.length)];
+}
 
 export class Engine {
   constructor(hooks = {}) {
-    // Game state
     this.state = State.ATTRACT;
+
     this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
     this.current = { shape: null, color: null, row: 0, col: 3 };
     this.next = null;
+
     this.score = 0;
     this.shapesSeen = 0;
     this.linesCompleted = 0;
     this.tetrises = 0;
+
     this.speed = "Slow";
     this.lineBonusMultiplier = 1;
+
     this.autoPlay = false;
+    this.aiTarget = null;
     this.aiInFlight = false;
+
     this.lockFrames = 0;
     this.LOCK_DELAY_STEPS = 3;
+
     this.running = false;
     this.lastTime = 0;
     this.acc = 0;
-    this.aiStallCounter = 0;
+
+    // high scores
     this.highScores = [];
 
-    // Callbacks for UI updates
+    // callbacks
     this.hooks = {
       onRender: hooks.onRender || (() => {}),
       onStats: hooks.onStats || (() => {}),
@@ -65,24 +107,22 @@ export class Engine {
     };
   }
 
-  // Returns gravity interval based on current speed
-  getGravityMs() {
+  gravityMs() {
     return SPEED_MS[this.speed] || 120;
   }
 
-  // Sets game speed and updates stats
+  /* ---------- setup ---------- */
   setSpeed(mode) {
     this.speed = mode in SPEED_MS ? mode : "Normal";
     this.hooks.onStats(this);
   }
 
-  // Initializes an empty board
   resetBoard() {
     this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
   }
 
-  // Starts a new game
   start() {
+    // start a fresh game
     this.state = State.PLAYING;
     this.resetBoard();
     this.current = { shape: null, color: null, row: 0, col: 3 };
@@ -92,32 +132,26 @@ export class Engine {
     this.tetrises = 0;
     this.next = null;
     this.lockFrames = 0;
-    this.aiStallCounter = 0;
     this.spawn();
     this.run();
     this.hooks.onRender(this);
     this.hooks.onStats(this);
   }
 
-  // Enters attract mode (demo state)
   enterAttract() {
     this.state = State.ATTRACT;
     this.resetBoard();
     this.current = { shape: null, color: null, row: 0, col: 3 };
     this.score = 0;
-    this.running = false;
     this.hooks.onRender(this);
     this.hooks.onStats(this);
   }
 
-  // Main game loop
   run() {
     if (this.running) return;
     this.running = true;
     this.lastTime = performance.now();
     this.acc = 0;
-    const MAX_AI_ATTEMPTS = 10;
-
     const tick = (now) => {
       if (!this.running) return;
       const delta = Math.min(1000 / 30, now - (this.lastTime || now));
@@ -131,51 +165,50 @@ export class Engine {
         return;
       }
 
+      // AI (lightweight) – set target on spawn; nudge toward target
       if (this.autoPlay && !this.aiInFlight) {
         this.aiInFlight = true;
-        let moved = false;
 
-        if (this.current.row === 0 && this.current.shape && this.next) {
-          const best = findBestMove(this.board, this.current, this.next);
+        if (this.current.row === 0 && this.current.shape) {
+          const best = findBestMove(
+            this.board,
+            this.current,
+            this.next,
+            ROWS,
+            COLS
+          );
           this.current.targetCol = best.col;
           this.current.targetRot = best.rot;
           this.current.rotationsLeft = best.rot;
-          this.aiStallCounter = 0;
         }
 
+        // move toward the plan
+        let moved = false;
         if (this.current.rotationsLeft && this.current.rotationsLeft > 0) {
           if (this.rotate()) {
             this.current.rotationsLeft--;
             moved = true;
           }
         } else if (this.current.col < this.current.targetCol) {
-          if (this.move(1)) moved = true;
+          this.move(1);
+          moved = true;
         } else if (this.current.col > this.current.targetCol) {
-          if (this.move(-1)) moved = true;
+          this.move(-1);
+          moved = true;
         }
 
+        // if touching down, try one smart slide (non-destructive)
         if (!this.canMove(1, 0)) {
-          if (this.attemptSmartFloorSlide()) {
-            moved = true;
-            if (!this.canMove(1, 0)) this.lockFrames++;
-          }
-        }
-
-        if (!moved && !this.canMove(1, 0)) {
-          this.aiStallCounter++;
-          if (this.aiStallCounter >= MAX_AI_ATTEMPTS) {
-            this.merge();
-            this.spawn();
-            this.aiStallCounter = 0;
-          }
+          this.attemptSmartFloorSlide();
         }
 
         this.aiInFlight = false;
       }
 
-      while (this.acc >= this.getGravityMs()) {
+      // fixed-step gravity
+      while (this.acc >= this.gravityMs()) {
         this.drop();
-        this.acc -= this.getGravityMs();
+        this.acc -= this.gravityMs();
       }
 
       this.hooks.onRender(this);
@@ -184,49 +217,45 @@ export class Engine {
     requestAnimationFrame(tick);
   }
 
-  // Checks if a piece can move or rotate
-  canMove(dr, dc, shape = this.current.shape, row = this.current.row, col = this.current.col) {
+  /* ---------- collision & motion ---------- */
+  canMove(
+    dr,
+    dc,
+    shape = this.current.shape,
+    row = this.current.row,
+    col = this.current.col
+  ) {
     for (let r = 0; r < shape.length; r++) {
       for (let c = 0; c < shape[0].length; c++) {
         if (!shape[r][c]) continue;
         const nr = row + r + dr;
         const nc = col + c + dc;
-        if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || this.board[nr][nc]) {
-          return false;
-        }
+        if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) return false;
+        if (this.board[nr][nc]) return false;
       }
     }
     return true;
   }
 
-  // Moves the piece left or right
-  move(dc) {
-    if (this.canMove(0, dc)) {
-      this.current.col += dc;
+  move(dir) {
+    if (this.state !== State.PLAYING) return false;
+    if (this.canMove(0, dir)) {
+      this.current.col += dir;
       this.lockFrames = 0;
       return true;
     }
     return false;
   }
 
-  // Rotates the piece with wall-kick attempts
   rotate() {
+    if (this.state !== State.PLAYING) return false;
+    if (!this.current.shape) return false;
     const rotated = rotateMatrix(this.current.shape);
-    for (let offset = 0; offset < this.current.shape[0].length; offset++) {
-      if (this.canMove(0, 0, rotated)) {
+    const kicks = [0, -1, 1, -2, 2];
+    for (const k of kicks) {
+      if (this.canMove(0, 0, rotated, this.current.row, this.current.col + k)) {
         this.current.shape = rotated;
-        this.lockFrames = 0;
-        return true;
-      }
-      if (this.canMove(0, -1, rotated)) {
-        this.current.col--;
-        this.current.shape = rotated;
-        this.lockFrames = 0;
-        return true;
-      }
-      if (this.canMove(0, 1, rotated)) {
-        this.current.col++;
-        this.current.shape = rotated;
+        this.current.col += k;
         this.lockFrames = 0;
         return true;
       }
@@ -234,31 +263,94 @@ export class Engine {
     return false;
   }
 
-  // Drops the piece one row or locks it
   drop() {
+    if (this.state !== State.PLAYING) return;
+
     if (this.canMove(1, 0)) {
       this.current.row++;
       this.lockFrames = 0;
-    } else {
-      this.lockFrames++;
-      if (this.lockFrames >= this.LOCK_DELAY_STEPS) {
-        this.merge();
-        this.spawn();
-      }
+      return;
     }
+
+    // try a smart slide into an adjacent gap BEFORE locking
+    if (this.attemptSmartFloorSlide()) {
+      this.lockFrames = 0;
+      return;
+    }
+
+    // small lock delay to allow last-moment adjustments
+    this.lockFrames++;
+    if (this.lockFrames < this.LOCK_DELAY_STEPS) return;
+
+    this.lockFrames = 0;
+    this.merge();
+    this.spawn();
   }
 
-  // Merges the current piece into the board and handles line clears
-  merge() {
-    const { shape, color, row, col } = this.current;
-    for (let r = 0; r < shape.length; r++) {
-      for (let c = 0; c < shape[0].length; c++) {
-        if (shape[r][c]) {
-          this.board[row + r][col + c] = color;
+  /* ---------- “smart” floor slide that avoids leaving new gaps ---------- */
+  attemptSmartFloorSlide() {
+    const MAX_STEP = 4;
+
+    // baseline: if we lock here, what holes?
+    const base = this.#simulateLock(this.current.row, this.current.col);
+    const baseHoles = this.#countHoles(base.board);
+    const baseFall = 0; // at floor, no fall
+
+    let best = null;
+
+    for (const dir of [1, -1]) {
+      for (let s = 1; s <= MAX_STEP; s++) {
+        const targetCol = this.current.col + dir * s;
+
+        // path at current row must be clear step-by-step
+        if (!this.canMove(0, targetCol - this.current.col)) break;
+
+        // must be able to descend at least one cell
+        if (
+          !this.canMove(1, 0, this.current.shape, this.current.row, targetCol)
+        )
+          continue;
+
+        // from that column, how far can we fall?
+        let r = this.current.row;
+        while (this.canMove(1, 0, this.current.shape, r, targetCol)) r++;
+
+        const sim = this.#simulateLock(r, targetCol);
+        const holes = this.#countHoles(sim.board);
+        const fall = r - this.current.row;
+
+        // prefer options that FALL further and DO NOT increase holes
+        if (fall > baseFall && holes <= baseHoles) {
+          // secondary: less bumpiness, less blockades
+          const quality =
+            -this.#getBumpiness(sim.board) - this.#getBlockades(sim.board);
+          const score = fall * 100 + (baseHoles - holes) * 40 + quality * 0.5;
+          if (!best || score > best.score)
+            best = { col: targetCol, row: this.current.row + 1, score };
         }
       }
     }
 
+    if (best) {
+      this.current.col = best.col;
+      this.current.row = Math.min(best.row, ROWS - 1);
+      return true;
+    }
+    return false;
+  }
+
+  /* ---------- merge/clear/score ---------- */
+  merge() {
+    const sh = this.current.shape;
+    for (let r = 0; r < sh.length; r++) {
+      for (let c = 0; c < sh[0].length; c++) {
+        if (sh[r][c])
+          this.board[this.current.row + r][this.current.col + c] =
+            this.current.color;
+      }
+    }
+
+    // clear lines
     let cleared = 0;
     for (let r = ROWS - 1; r >= 0; r--) {
       if (this.board[r].every((x) => x)) {
@@ -270,8 +362,9 @@ export class Engine {
     }
 
     if (cleared) {
-      let bonus = cleared === 4 ? 800 : 0;
+      let bonus = 0;
       if (cleared === 4) {
+        bonus = 800;
         this.tetrises++;
         this.hooks.onRender(this, { fireworks: true });
       }
@@ -283,89 +376,172 @@ export class Engine {
     }
   }
 
-  // Spawns a new piece
   spawn() {
-    if (!this.next) this.next = randomShape();
+    if (!this.next) this.next = rngShape();
     this.current = {
-      shape: deepCopy(this.next.shape),
+      shape: this.next.shape.map((r) => r.slice()),
       color: this.next.color,
       row: 0,
       col: 3,
     };
-    this.next = randomShape();
+    this.next = rngShape();
     this.shapesSeen++;
     this.hooks.onStats(this);
 
-    if (!this.canMove(0, 0)) {
+    // game over?
+    if (
+      !this.canMove(
+        0,
+        0,
+        this.current.shape,
+        this.current.row,
+        this.current.col
+      )
+    ) {
       this.gameOver();
     }
   }
 
-  // Ends the game and transitions to attract mode
   gameOver() {
     const final = this.score;
     const wasAuto = this.autoPlay;
+    // reset “visible” state and go to attract; UI will prompt for name if manual play
     this.enterAttract();
     this.hooks.onGameOver(final, wasAuto);
   }
 
-  // Heuristic calculations for smart floor slide
-  #countHoles(board) {
+  /* ---------- board metrics used by slide heuristic ---------- */
+  #countHoles(bd) {
     let holes = 0;
     for (let c = 0; c < COLS; c++) {
       let block = false;
       for (let r = 0; r < ROWS; r++) {
-        if (board[r][c]) block = true;
+        if (bd[r][c]) block = true;
         else if (block) holes++;
       }
     }
     return holes;
   }
-
-  #getColumnHeights(board) {
-    const heights = new Array(COLS).fill(0);
+  #getHeights(bd) {
+    const h = new Array(COLS).fill(0);
     for (let c = 0; c < COLS; c++) {
       for (let r = 0; r < ROWS; r++) {
-        if (board[r][c]) {
-          heights[c] = ROWS - r;
+        if (bd[r][c]) {
+          h[c] = ROWS - r;
           break;
         }
       }
     }
-    return heights;
+    return h;
   }
-
-  #getBumpiness(board) {
-    const heights = this.#getColumnHeights(board);
-    return heights.slice(0, -1).reduce((sum, h, i) => sum + Math.abs(h - heights[i + 1]), 0);
+  #getBumpiness(bd) {
+    const h = this.#getHeights(bd);
+    let s = 0;
+    for (let i = 0; i < h.length - 1; i++) s += Math.abs(h[i] - h[i + 1]);
+    return s;
+  }
+  #getBlockades(bd) {
+    let b = 0;
+    for (let c = 0; c < COLS; c++) {
+      let hole = false;
+      for (let r = 0; r < ROWS; r++) {
+        if (!bd[r][c]) hole = true;
+        else if (hole) b++;
+      }
+    }
+    return b;
   }
 
   #simulateLock(row, col) {
-    const testBoard = deepCopy(this.board);
-    const { shape, color } = this.current;
-    for (let tr = 0; tr < shape.length; tr++) {
-      for (let tc = 0; tc < shape[0].length; tc++) {
-        if (shape[tr][tc]) testBoard[row + tr][col + tc] = color;
+    const tb = this.board.map((r) => r.slice());
+    const sh = this.current.shape;
+    for (let tr = 0; tr < sh.length; tr++) {
+      for (let tc = 0; tc < sh[0].length; tc++) {
+        if (sh[tr][tc]) tb[row + tr][col + tc] = this.current.color;
       }
     }
-    let linesCleared = 0;
+    // clear lines in the simulation
+    let lines = 0;
     for (let r = ROWS - 1; r >= 0; r--) {
-      if (testBoard[r].every((x) => x)) {
-        testBoard.splice(r, 1);
-        testBoard.unshift(Array(COLS).fill(0));
-        linesCleared++;
+      if (tb[r].every((x) => x)) {
+        tb.splice(r, 1);
+        tb.unshift(Array(COLS).fill(0));
+        lines++;
         r++;
       }
     }
-    return { board: testBoard, linesCleared };
+    return { board: tb, linesCleared: lines };
   }
 
-  // Attempts to slide the piece left or right when grounded
-  attemptSmartFloorSlide() {
-    const origCol = this.current.col;
-    let bestScore = -Infinity, bestCol = origCol;
+  /* ---------- storage ---------- */
+  getDefaultHighScores() {
+    return [
+      { name: "Paul Atreides", score: 12840 },
+      { name: "Ender Wiggin", score: 11320 },
+      { name: "Hari Seldon", score: 10680 },
+      { name: "Valentine Michael Smith", score: 9950 },
+      { name: "Case", score: 9420 },
+      { name: "R. Daneel Olivaw", score: 8870 },
+      { name: "Gully Foyle", score: 8450 },
+      { name: "Trillian", score: 7930 },
+      { name: "Rick Deckard", score: 7610 },
+      { name: "Mark Watney", score: 7240 },
+    ];
+  }
 
-    for (let dc = -3; dc <= 3; dc++) {
-      const newCol = this.current.col + dc;
-      if (this.canMove(0, dc)) {
-        const { board: simBoard, linesCleared } = this.#simulateLock(this
+  encodeScores(list) {
+    const json = JSON.stringify(list);
+    return btoa(String.fromCharCode(...new TextEncoder().encode(json)));
+  }
+  decodeScores(str) {
+    try {
+      const bytes = Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return [];
+    }
+  }
+
+  loadHighScores(textareaEl) {
+    let loaded = false,
+      list;
+
+    if (textareaEl && textareaEl.value) {
+      const decoded = this.decodeScores(textareaEl.value);
+      if (Array.isArray(decoded) && decoded.length) {
+        list = decoded;
+        loaded = true;
+      }
+    }
+    if (!loaded) {
+      try {
+        const data = localStorage.getItem("tetrisHighScores");
+        if (data) {
+          const parsed = JSON.parse(data);
+          if (Array.isArray(parsed) && parsed.length) {
+            list = parsed;
+            loaded = true;
+          }
+        }
+      } catch {}
+    }
+    if (!loaded) {
+      list = this.getDefaultHighScores();
+      localStorage.setItem("tetrisHighScores", JSON.stringify(list));
+      if (textareaEl) textareaEl.value = this.encodeScores(list);
+    }
+    list.sort((a, b) => b.score - a.score);
+    if (list.length > 10) list.length = 10;
+    this.highScores = list;
+    this.hooks.onHighScoresChanged(this.highScores);
+  }
+
+  saveHighScore(entry, textareaEl) {
+    this.highScores.push(entry);
+    this.highScores.sort((a, b) => b.score - a.score);
+    if (this.highScores.length > 10) this.highScores.length = 10;
+    localStorage.setItem("tetrisHighScores", JSON.stringify(this.highScores));
+    if (textareaEl) textareaEl.value = this.encodeScores(this.highScores);
+    this.hooks.onHighScoresChanged(this.highScores);
+  }
+}

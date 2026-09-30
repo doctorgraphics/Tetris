@@ -30,53 +30,61 @@ const engine = new Engine({
   },
 });
 
-// Expose constants for UI access
+// expose these so UI can read constants (optional)
 Engine.SPEED_MS = SPEED_MS;
 Engine.SCORE_MULT = SCORE_MULT;
 
-function startAttractCycle() {
-  engine.enterAttract();
-  // Cycle: banner → top 10 (name lines + score line), repeat
-  function* queue() {
-    yield ["Let's", "Play", "Tetris!"];
-    const scores = engine.highScores.slice(0, 10);
-    for (const s of scores) yield ui.makeHighScoreLines(s);
-  }
-  let iter = null;
-  const getNext = () => {
-    if (!iter) iter = queue();
-    const n = iter.next();
-    if (n.done) {
-      // After banner + 10 highscores, auto-start a Fast AI game
-      ui.stopAttract();
-      engine.setSpeed("Fast");
-      engine.start();
-      engine.autoPlay = true;
-      if (ui.autoBtn) ui.autoBtn.textContent = "Stop Auto Play";
-      return null; // Signal attract to stop
-    }
-    return n.value;
-  };
-  ui.startAttract(getNext);
-}
+ function startAttractCycle() {
+   engine.enterAttract();
+   // cycle: banner → top 10 (name lines + score line), repeat
+   function* queue() {
+     yield ["Let's", "Play", "Tetris!"];
+     const scores = engine.highScores.slice(0, 10);
+     for (const s of scores) yield ui.makeHighScoreLines(s);
+   }
+   let iter = null;
+   const getNext = () => {
+     if (!iter) iter = queue();
+     const n = iter.next();
+-    if (n.done) {
+-      iter = null;
+-      return ["Let's", "Play", "Tetris!"];
+-    }
++    if (n.done) {
++      // After banner + 10 highscores, auto-start a Fast AI game
++      ui.stopAttract();
++      engine.setSpeed("Fast");          // uses the built-in SPEED_MS table
++      engine.start();                   // fresh game
++      engine.autoPlay = true;           // let the AI drive
++      if (ui.autoBtn) ui.autoBtn.textContent = "Stop Auto Play";
++      return null;                      // signal attract to stop
++    }
+     return n.value;
+   };
+   ui.startAttract(getNext);
+ }
+
 
 function init() {
-  // Set CSS vars for grid
+  // read CSS vars for grid (in case you tweak)
   document.documentElement.style.setProperty("--cols", 10);
   document.documentElement.style.setProperty("--rows", 20);
 
-  // Bind controls to engine
+  // bind controls to engine
   ui.bindControls(engine);
 
-  // Load and render high scores
+  // load scores → render them once
   engine.loadHighScores(ui.dataTA);
 
-  // Set default speed
+  // default speed
   engine.setSpeed("Slow");
 
-  // Draw initial scene and start attract mode
+  // draw empty scene & start attract mode immediately on load
   ui.drawGame(engine);
   startAttractCycle();
+
+  // prepare a next piece so the first “New Game”/AI start is instant
+  engine.next = engine.next || engine.constructor ? null : null; // harmless; spawn() will set it
 }
 
 init();
